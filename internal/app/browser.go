@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 )
 
 type Browser struct {
@@ -30,12 +32,12 @@ func (b *Browser) Start(ctx context.Context, browserType string, args []string, 
 		return err
 	}
 
-	execPath, err := b.findExecutable(browserType)
+	execPath, err := findExecutable(browserType)
 	if err != nil {
 		return err
 	}
 
-	b.cmd = b.buildCommand(ctx, execPath, args, url)
+	b.cmd = buildCommand(ctx, execPath, b.port, args, url)
 
 	if err := b.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start browser: %w", err)
@@ -70,13 +72,9 @@ func (b *Browser) checkPort() error {
 	return nil
 }
 
-func (b *Browser) findExecutable(browserType string) (string, error) {
-	return "", nil
-}
-
-func (b *Browser) buildCommand(ctx context.Context, execPath string, args []string, url string) *exec.Cmd {
+func buildCommand(ctx context.Context, execPath string, port int, args []string, url string) *exec.Cmd {
 	defaultArgs := []string{
-		fmt.Sprintf("--remote-debugging-port=%d", b.port),
+		fmt.Sprintf("--remote-debugging-port=%d", port),
 		"--no-first-run",
 		"--no-default-browser-check",
 	}
@@ -91,4 +89,82 @@ func (b *Browser) buildCommand(ctx context.Context, execPath string, args []stri
 	cmd.Dir = filepath.Dir(execPath)
 
 	return cmd
+}
+
+func findExecutable(browserType string) (string, error) {
+	var paths []string
+
+	switch runtime.GOOS {
+	case "windows":
+		paths = browserPathsWindows(browserType)
+	case "darwin":
+		paths = browserPathsDarwin(browserType)
+	default:
+		paths = browserPathsLinux(browserType)
+	}
+
+	for _, p := range paths {
+		if runtime.GOOS == "windows" {
+			if _, err := os.Stat(p); err == nil {
+				return p, nil
+			}
+		} else {
+			if p, err := exec.LookPath(p); err == nil {
+				return p, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("browser %q not found, searched: %v", browserType, paths)
+}
+
+func expandEnvPath(path string) string {
+	return os.ExpandEnv(path)
+}
+
+func browserPathsWindows(browserType string) []string {
+	var paths []string
+
+	switch browserType {
+	case "chrome":
+		paths = []string{
+			expandEnvPath(`${ProgramFiles}\Google\Chrome\Application\chrome.exe`),
+			expandEnvPath(`${LocalAppData}\Google\Chrome\Application\chrome.exe`),
+		}
+	case "chromium":
+		paths = []string{
+			expandEnvPath(`${LocalAppData}\Chromium\Application\chrome.exe`),
+		}
+	case "edge":
+		paths = []string{
+			expandEnvPath(`${ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe`),
+			expandEnvPath(`${ProgramFiles}\Microsoft\Edge\Application\msedge.exe`),
+		}
+	}
+
+	return paths
+}
+
+func browserPathsDarwin(browserType string) []string {
+	switch browserType {
+	case "chrome":
+		return []string{"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
+	case "chromium":
+		return []string{"/Applications/Chromium.app/Contents/MacOS/Chromium"}
+	case "edge":
+		return []string{"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"}
+	}
+	return nil
+}
+
+func browserPathsLinux(browserType string) []string {
+	switch browserType {
+	case "chrome":
+		return []string{"google-chrome", "google-chrome-stable"}
+	case "chromium":
+		return []string{"chromium", "chromium-browser"}
+	case "edge":
+		return []string{"microsoft-edge", "microsoft-edge-stable"}
+	}
+	return nil
 }
