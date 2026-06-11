@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/241x/twist/internal/app"
+	"github.com/241x/twist/internal/log"
 	"github.com/spf13/cobra"
 )
 
@@ -47,6 +48,8 @@ func init() {
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
+	log.Init(verbose)
+
 	opts := app.Options{
 		Host:          cdpHost,
 		Port:          cdpPort,
@@ -69,10 +72,12 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		opts.ConfigData = configData
 	}
 
+	ctx := log.WithContext(context.Background())
+
 	a := app.New(opts)
 	defer a.Shutdown()
 
-	return a.Run(context.Background())
+	return a.Run(ctx)
 }
 
 func resolveConfig() ([]byte, error) {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+
+	"github.com/241x/twist/internal/log"
 )
 
 type Options struct {
@@ -82,11 +84,14 @@ func (a *App) runListTargets(ctx context.Context) error {
 }
 
 func (a *App) runIntercept(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
 	cfg, err := LoadConfig(a.opts.ConfigFile, a.opts.ConfigData)
 	if err != nil {
 		return err
 	}
 	a.config = cfg
+	logger.Info().Str("name", cfg.Name).Int("rules", len(cfg.Rules)).Msg("config loaded")
 
 	host := a.opts.Host
 	if a.opts.Launch {
@@ -101,6 +106,7 @@ func (a *App) runIntercept(ctx context.Context) error {
 
 	if browser.IsLaunched() {
 		defer browser.Stop()
+		logger.Info().Str("browser", a.opts.LaunchBrowser).Int("port", a.opts.Port).Msg("browser launched")
 	}
 
 	a.cdp = NewCDP(host, a.opts.Port, a.opts.Timeout, a.opts.Verbose)
@@ -108,23 +114,27 @@ func (a *App) runIntercept(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to CDP: %w", err)
 	}
 	defer a.cdp.Close()
+	logger.Info().Str("host", host).Int("port", a.opts.Port).Msg("CDP connected")
 
 	a.target = NewTarget(a.cdp)
 	selected, err := a.target.Select(ctx, a.opts.Target, a.opts.URL)
 	if err != nil {
 		return fmt.Errorf("failed to select target: %w", err)
 	}
+	logger.Info().Str("id", selected.ID).Str("url", selected.URL).Msg("target selected")
 
 	if a.opts.Target != "" && a.opts.URL != "" && !a.opts.Launch {
 		if err := a.cdp.NavigateTo(ctx, selected.ID, a.opts.URL); err != nil {
 			return fmt.Errorf("failed to navigate to URL: %w", err)
 		}
+		logger.Info().Str("url", a.opts.URL).Msg("navigated")
 	}
 
 	a.intercept = NewIntercept(a.cdp, a.config)
 	if err := a.intercept.Start(ctx, selected.ID); err != nil {
 		return fmt.Errorf("failed to start interception: %w", err)
 	}
+	logger.Info().Msg("interception started")
 
 	return a.intercept.Wait(ctx)
 }
