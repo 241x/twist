@@ -41,12 +41,8 @@ func (t *Target) selectByID(ctx context.Context, targetID string) (*CDPTarget, e
 }
 
 func (t *Target) createAndNavigate(ctx context.Context, url string) (*CDPTarget, error) {
-	target, err := t.cdp.NewTab(ctx)
+	target, err := t.cdp.NewTab(ctx, url)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := t.cdp.NavigateTo(ctx, target.ID, url); err != nil {
 		return nil, err
 	}
 
