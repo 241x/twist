@@ -1,43 +1,14 @@
 package cmd
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/241x/twist/internal/app"
 	"github.com/spf13/cobra"
 )
-
-var (
-	ErrConfigMissing = &ExitError{Code: 1, Msg: "config file required"}
-	ErrRuntime       = &ExitError{Code: 2, Msg: "runtime error"}
-)
-
-type ExitError struct {
-	Code int
-	Msg  string
-	Err  error
-}
-
-func (e *ExitError) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("%s: %v", e.Msg, e.Err)
-	}
-	return e.Msg
-}
-
-func (e *ExitError) Unwrap() error {
-	return e.Err
-}
-
-func GetExitCode(err error) int {
-	var exitErr *ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.Code
-	}
-	return 1
-}
 
 var (
 	cdpHost        string
@@ -76,16 +47,32 @@ func init() {
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
-	if listTargets {
-		return nil
+	opts := app.Options{
+		Host:          cdpHost,
+		Port:          cdpPort,
+		Launch:        launch,
+		LaunchBrowser: launchBrowser,
+		LaunchArgs:    launchArgs,
+		URL:           targetURL,
+		ConfigFile:    configFile,
+		ListTargets:   listTargets,
+		Target:        target,
+		Verbose:       verbose,
+		Timeout:       timeout,
 	}
 
-	config, err := resolveConfig()
-	if err != nil {
-		return err
+	if !listTargets {
+		configData, err := resolveConfig()
+		if err != nil {
+			return err
+		}
+		opts.ConfigData = configData
 	}
-	_ = config
-	return nil
+
+	a := app.New(opts)
+	defer a.Shutdown()
+
+	return a.Run(context.Background())
 }
 
 func resolveConfig() ([]byte, error) {
