@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>twist editor</title>
+<style>
+:root{--bg:#fff;--surface:#f9f9fb;--border:#e0e0e6;--text:#1a1a2e;--text2:#666680;--accent:#4f46e5;--accent2:#818cf8;--green:#059669;--red:#dc2626;--tag-bg:#eef2ff;--tag-text:#4338ca;--radius:6px}
+.dark{--bg:#0f0f1a;--surface:#1a1a2e;--border:#2a2a40;--text:#e0e0f0;--text2:#8888a0;--accent:#818cf8;--accent2:#6366f1;--green:#34d399;--red:#f87171;--tag-bg:#1e1b4b;--tag-text:#a5b4fc}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+header .logo{font-weight:700;font-size:15px;color:var(--accent)}
+header input{border:1px solid var(--border);padding:6px 10px;border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:13px;width:160px}
+header button{padding:6px 14px;border-radius:var(--radius);font-size:13px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text);display:flex;align-items:center;gap:4px}
+header button:hover{background:var(--surface);border-color:var(--accent)}
+header button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+header button.primary:hover{background:var(--accent2)}
+.spacer{flex:1}
+main{display:flex;flex:1;overflow:hidden}
+.panel-left{width:50%;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:12px}
+.panel-right{width:50%;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
+.panel-right .toolbar{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
+.panel-right pre{flex:1;overflow:auto;padding:16px;font:13px/1.6 monospace;background:var(--surface);color:var(--text);margin:0;white-space:pre-wrap;word-break:break-all}
+.rule-item{display:flex;align-items:center;gap:8px;padding:8px 10px;margin:2px 0;border-radius:var(--radius);cursor:pointer;border:1px solid transparent;font-size:13px}
+.rule-item:hover{background:var(--surface)}
+.rule-item.active{border-color:var(--accent);background:var(--surface)}
+.rule-item .r-id{color:var(--text2);font-family:monospace;font-size:12px;min-width:50px}
+.rule-item .r-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rule-item .r-stage{font-size:11px;padding:2px 6px;border-radius:3px;background:var(--tag-bg);color:var(--tag-text)}
+.section-title{font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;display:flex;align-items:center;gap:8px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.form-group{margin-bottom:10px}
+.form-group label{display:block;font-size:12px;color:var(--text2);margin-bottom:3px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:13px}
+.form-group select{cursor:pointer}
+.form-group textarea{font-family:monospace;resize:vertical;min-height:60px}
+.form-row{display:flex;gap:8px}
+.form-row .form-group{flex:1}
+.cond-item,.act-item{display:flex;align-items:center;gap:8px;padding:6px 10px;margin:3px 0;background:var(--surface);border-radius:var(--radius);font-size:13px}
+.cond-item .c-label{color:var(--green);font-size:12px;min-width:120px;font-family:monospace}
+.cond-item .c-desc{font-size:11px;color:var(--text2)}
+.cond-item .c-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2);font-family:monospace}
+.act-item .a-label{color:var(--accent);font-size:12px;min-width:120px;font-family:monospace}
+.act-item .a-desc{font-size:11px;color:var(--text2)}
+.act-item .a-val{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2);font-family:monospace}
+.btn-sm{padding:3px 8px;font-size:12px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text)}
+.btn-sm:hover{border-color:var(--accent)}
+.btn-sm.danger{color:var(--red);border-color:transparent}
+.btn-sm.danger:hover{background:var(--red);color:#fff}
+.btn-link{color:var(--accent);cursor:pointer;font-size:12px;border:0;background:0;padding:2px 0}
+.btn-link:hover{text-decoration:underline}
+.toggle-sw{position:relative;display:inline-block;width:32px;height:18px}
+.toggle-sw input{opacity:0;width:0;height:0}
+.toggle-sw .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--border);border-radius:18px;transition:.15s}
+.toggle-sw .slider::before{content:'';position:absolute;height:14px;width:14px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:.15s}
+.toggle-sw input:checked+.slider{background:var(--accent)}
+.toggle-sw input:checked+.slider::before{transform:translateX(14px)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:380px;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.modal h3{font-size:15px;margin-bottom:12px}
+.modal .form-group{margin-bottom:10px}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.modal .actions button{padding:7px 16px;border-radius:var(--radius);font-size:13px;cursor:pointer}
+.modal .actions .cancel{border:1px solid var(--border);background:var(--bg);color:var(--text)}
+.modal .actions .confirm{background:var(--accent);color:#fff;border:0}
+.empty-state{text-align:center;padding:40px 20px;color:var(--text2)}
+.select-info{font-size:11px;color:var(--text2);margin-top:2px}
+.help-tip{font-size:11px;color:var(--accent);cursor:help;margin-left:4px}
+</style>
+
+<body>
+<header>
+  <span class="logo">twist editor</span>
+  <input id="cfg-name" placeholder="Config name" oninput="syncMeta()">
+  <input id="cfg-version" value="1.0" placeholder="Version" style="width:60px" oninput="syncMeta()">
+  <span class="spacer"></span>
+  <button id="lang-btn" onclick="toggleLang()" style="font-size:13px" title="Switch language">中</button>
+  <button id="theme-btn" onclick="toggleTheme()" title="Toggle theme">☀</button>
+  <button onclick="loadFile()" data-t="open">Open</button>
+  <button onclick="doExport()" data-t="export">Export</button>
+  <button class="primary" onclick="doSave()" data-t="save">Save</button>
+</header>
+
+<main>
+  <div class="panel-left">
+    <div id="rule-list-container">
+      <div class="section-title"><span data-t="rules">Rules</span> <span style="font-weight:400;font-size:12px;cursor:pointer;color:var(--text2)" onclick="addRule()">[+ add]</span></div>
+      <div id="rule-list"></div>
+    </div>
+    <div id="editor-area"></div>
+  </div>
+  <div class="panel-right">
+    <div class="toolbar"><span data-t="preview">Preview</span> <span id="preview-info" style="color:var(--text2)"></span></div>
+    <pre id="preview-code"></pre>
+  </div>
+</main>
+
+<div class="modal-overlay" id="modal" style="display:none" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script>
+let lang='en'
+const T={
+  en:{
+    rules:'Rules',preview:'Preview',open:'Open',export:'Export',save:'Save',
+    ruleEditor:'Rule Editor',selectRule:'Select a rule to edit',addRule:'+ Add your first rule',
+    name:'Name',id:'ID',priority:'Priority',stage:'Stage',enabled:'Enabled',request:'Request',response:'Response',
+    allOf:'Match — allOf',anyOf:'Match — anyOf',noconds:'No conditions — matches all requests',
+    actions:'Actions',noconds2:'No actions',
+    addCond:'Add condition to',cancel:'Cancel',add:'Add',
+    addAction:'Add action',type:'Type',value:'Value',pattern:'Pattern',key:'Key',
+    secondary:'Secondary',select:'Select',statusCode:'Status code',body:'Body',
+    search:'Search',replace:'Replace',patches:'JSON Patch array',
+    urlEquals:'URL equals',urlPrefix:'URL starts with',urlSuffix:'URL ends with',urlContains:'URL contains',urlRegex:'URL regex',
+    method:'HTTP method',resourceType:'Resource type',
+    headerExists:'Header exists',headerNotExists:'Header missing',headerEquals:'Header equals',headerContains:'Header contains',headerRegex:'Header regex',
+    queryExists:'Query exists',queryEquals:'Query equals',queryContains:'Query contains',queryRegex:'Query regex',
+    cookieExists:'Cookie exists',cookieEquals:'Cookie equals',cookieContains:'Cookie contains',cookieRegex:'Cookie regex',
+    bodyContains:'Body contains',bodyRegex:'Body regex',bodyJsonPath:'JSON Path',
+    block:'Block request',setUrl:'Change URL',setMethod:'Change method',setHeader:'Set header',removeHeader:'Remove header',
+    setQueryParam:'Set query param',removeQueryParam:'Remove query param',
+    setCookie:'Set cookie',removeCookie:'Remove cookie',setFormField:'Set form field',removeFormField:'Remove form field',
+    setStatus:'Set status code',setBody:'Replace response body',replaceBodyText:'Replace text in body',patchBodyJson:'JSON Patch body',
+  },
+  zh:{
+    rules:'规则',preview:'预览',open:'打开',export:'导出',save:'保存',
+    ruleEditor:'规则编辑器',selectRule:'点击左侧规则进行编辑',addRule:'+ 添加第一条规则',
+    name:'名称',id:'标识',priority:'优先级',stage:'阶段',enabled:'启用',request:'请求',response:'响应',
+    allOf:'匹配规则 — allOf',anyOf:'匹配规则 — anyOf',noconds:'无条件 — 匹配所有请求',
+    actions:'执行行为',noconds2:'无行为',
+    addCond:'添加条件到',cancel:'取消',add:'添加',
+    addAction:'添加行为',type:'类型',value:'值',pattern:'正则',key:'键名',
+    secondary:'附加',select:'选择',statusCode:'状态码',body:'响应体',
+    search:'查找',replace:'替换',patches:'JSON Patch 操作数组',
+    urlEquals:'URL 精确匹配',urlPrefix:'URL 前缀',urlSuffix:'URL 后缀',urlContains:'URL 包含',urlRegex:'URL 正则',
+    method:'HTTP 方法',resourceType:'资源类型',
+    headerExists:'Header 存在',headerNotExists:'Header 不存在',headerEquals:'Header 等于',headerContains:'Header 包含',headerRegex:'Header 正则',
+    queryExists:'Query 存在',queryEquals:'Query 等于',queryContains:'Query 包含',queryRegex:'Query 正则',
+    cookieExists:'Cookie 存在',cookieEquals:'Cookie 等于',cookieContains:'Cookie 包含',cookieRegex:'Cookie 正则',
+    bodyContains:'请求体包含',bodyRegex:'请求体正则',bodyJsonPath:'JSON Path 匹配',
+    block:'阻止请求',setUrl:'修改 URL',setMethod:'修改方法',setHeader:'设置 Header',removeHeader:'删除 Header',
+    setQueryParam:'设置 Query',removeQueryParam:'删除 Query',
+    setCookie:'设置 Cookie',removeCookie:'删除 Cookie',setFormField:'设置表单',removeFormField:'删除表单',
+    setStatus:'修改状态码',setBody:'替换响应体',replaceBodyText:'替换响应体文本',patchBodyJson:'JSON Patch 修改',
+  }
+}
+
+function t(key){return (T[lang]&&T[lang][key])||T.en[key]||key}
+
+function applyLang(){
+  document.querySelectorAll('[data-t]').forEach(el=>{el.textContent=t(el.dataset.t)})
+  document.getElementById('cfg-name').placeholder=t('name')
+  document.querySelectorAll('[data-tp]').forEach(el=>{el.placeholder=t(el.dataset.tp)})
+}
+
+function toggleLang(){lang=lang==='en'?'zh':'en';document.getElementById('lang-btn').textContent=lang==='en'?'中':'EN';applyLang()}
+
+const COND_TYPES=[
+  {value:'urlEquals',t:'urlEquals',fields:['value']},
+  {value:'urlPrefix',t:'urlPrefix',fields:['value']},
+  {value:'urlSuffix',t:'urlSuffix',fields:['value']},
+  {value:'urlContains',t:'urlContains',fields:['value']},
+  {value:'urlRegex',t:'urlRegex',fields:['pattern']},
+  {value:'method',t:'method',fields:['values'],select:'values',options:['GET','POST','PUT','DELETE','PATCH','HEAD','OPTIONS']},
+  {value:'resourceType',t:'resourceType',fields:['values'],select:'values',options:['document','script','stylesheet','image','media','font','xhr','fetch','websocket','other']},
+  {value:'headerExists',t:'headerExists',fields:['name']},
+  {value:'headerNotExists',t:'headerNotExists',fields:['name']},
+  {value:'headerEquals',t:'headerEquals',fields:['name','value']},
+  {value:'headerContains',t:'headerContains',fields:['name','value']},
+  {value:'headerRegex',t:'headerRegex',fields:['name','pattern']},
+  {value:'queryExists',t:'queryExists',fields:['name']},
+  {value:'queryEquals',t:'queryEquals',fields:['name','value']},
+  {value:'queryContains',t:'queryContains',fields:['name','value']},
+  {value:'queryRegex',t:'queryRegex',fields:['name','pattern']},
+  {value:'cookieExists',t:'cookieExists',fields:['name']},
+  {value:'cookieEquals',t:'cookieEquals',fields:['name','value']},
+  {value:'cookieContains',t:'cookieContains',fields:['name','value']},
+  {value:'cookieRegex',t:'cookieRegex',fields:['name','pattern']},
+  {value:'bodyContains',t:'bodyContains',fields:['value']},
+  {value:'bodyRegex',t:'bodyRegex',fields:['pattern']},
+  {value:'bodyJsonPath',t:'bodyJsonPath',fields:['path','value']},
+]
+const ACT_TYPES=[
+  {value:'block',t:'block',stage:'request',fields:['statusCode','body'],bodyField:'body'},
+  {value:'setUrl',t:'setUrl',stage:'request',fields:['value']},
+  {value:'setMethod',t:'setMethod',stage:'request',fields:['value'],select:'value',options:['GET','POST','PUT','DELETE','PATCH','HEAD','OPTIONS']},
+  {value:'setHeader',t:'setHeader',stage:'request',fields:['name','value']},
+  {value:'removeHeader',t:'removeHeader',stage:'request',fields:['name']},
+  {value:'setQueryParam',t:'setQueryParam',stage:'request',fields:['name','value']},
+  {value:'removeQueryParam',t:'removeQueryParam',stage:'request',fields:['name']},
+  {value:'setCookie',t:'setCookie',stage:'request',fields:['name','value']},
+  {value:'removeCookie',t:'removeCookie',stage:'request',fields:['name']},
+  {value:'setFormField',t:'setFormField',stage:'request',fields:['name','value']},
+  {value:'removeFormField',t:'removeFormField',stage:'request',fields:['name']},
+  {value:'setStatus',t:'setStatus',stage:'response',fields:['value']},
+  {value:'setBody',t:'setBody',stage:'response',fields:['value'],bodyField:'value'},
+  {value:'replaceBodyText',t:'replaceBodyText',stage:'response',fields:['search','replace']},
+  {value:'patchBodyJson',t:'patchBodyJson',stage:'response',fields:['patches']},
+]
+
+let config={
+  id:'twist-'+ts(),name:'Untitled',version:'1.0',
+  rules:[{id:'rule-001',name:'Example',enabled:true,priority:0,stage:'request',
+    match:{allOf:[{type:'urlContains',value:'/api/'}],anyOf:[]},
+    actions:[{type:'block',statusCode:204}]}]
+}
+let activeRule=-1,showDark=false
+
+function ts(){return new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).slice(2,8)}
+
+function init(){
+  if(localStorage.getItem('twist-theme')==='dark') toggleTheme()
+  document.getElementById('cfg-name').value=config.name
+  document.getElementById('cfg-version').value=config.version
+  applyLang()
+  render()
+}
+
+function toggleTheme(){
+  showDark=!showDark
+  document.body.classList.toggle('dark',showDark)
+  document.getElementById('theme-btn').textContent=showDark?'☾':'☀'
+  localStorage.setItem('twist-theme',showDark?'dark':'light')
+}
+
+function render(){renderRuleList();renderEditor();renderPreview()}
+
+function renderRuleList(){
+  let h=''
+  config.rules.forEach((r,i)=>{
+    let stage=t(r.stage||'request')
+    h+=`<div class="rule-item${i===activeRule?' active':''}" onclick="selectRule(${i})">
+      <input type="checkbox" ${r.enabled!==false?'checked':''} onclick="event.stopPropagation();r.enabled=!r.enabled;render()">
+      <span class="r-id">${r.id||'?'}</span>
+      <span class="r-name">${r.name||'unnamed'}</span>
+      <span class="r-stage">${stage}</span>
+      <span style="color:var(--red);cursor:pointer;font-weight:bold;padding:2px 4px" onclick="event.stopPropagation();config.rules.splice(${i},1);if(activeRule>=config.rules.length)activeRule=config.rules.length-1;render()">×</span>
+    </div>`
+  })
+  h+=`<div class="btn-link" style="margin-top:6px" onclick="addRule()">+ Add rule</div>`
+  document.getElementById('rule-list').innerHTML=h||'<div class="empty-state"><p>No rules yet</p><div class="btn-link" onclick="addRule()">'+t('addRule')+'</div></div>'
+}
+
+function renderEditor(){
+  let area=document.getElementById('editor-area')
+  if(activeRule<0||activeRule>=config.rules.length){
+    area.innerHTML='<div class="section-title">'+t('ruleEditor')+'</div><div class="empty-state"><p>'+t('selectRule')+'</p><div class="btn-link" onclick="addRule()">'+t('addRule')+'</div></div>'
+    return
+  }
+  let r=config.rules[activeRule]
+  let m=r.match||{allOf:[],anyOf:[]}
+  let acts=r.actions||[]
+  let h='<div class="section-title">'+t('ruleEditor')+'</div>'
+  h+=`<div class="form-row">
+    <div class="form-group" style="flex:2"><label>${t('name')}</label><input value="${esc(r.name||'')}" onchange="updateRule('name',this.value)"></div>
+    <div class="form-group"><label>${t('id')}</label><input value="${esc(r.id||'')}" onchange="updateRule('id',this.value)"></div>
+  </div>`
+  h+=`<div class="form-row">
+    <div class="form-group"><label>${t('priority')}</label><select onchange="updateRule('priority',parseInt(this.value))">${opts(20,r.priority||0)}</select></div>
+    <div class="form-group"><label>${t('stage')}</label><select onchange="updateRule('stage',this.value)"><option value="request"${r.stage==='request'?' selected':''}>${t('request')}</option><option value="response"${r.stage==='response'?' selected':''}>${t('response')}</option></select></div>
+    <div class="form-group"><label>${t('enabled')}</label><label class="toggle-sw" style="margin-top:4px"><input type="checkbox" ${r.enabled!==false?'checked':''} onchange="updateRule('enabled',this.checked)"><span class="slider"></span></label></div>
+  </div>`
+
+  h+=`<div class="section-title">${t('allOf')} <span style="font-weight:400;font-size:12px;cursor:pointer;color:var(--text2)" onclick="addCondition('allOf')">[+]</span></div>`
+  ;(m.allOf||[]).forEach((c,i)=>{h+=renderCondition(c,'allOf',i)})
+  if(!(m.allOf||[]).length) h+=`<div style="font-size:12px;color:var(--text2);padding:4px 0">${t('noconds')}</div>`
+
+  h+=`<div class="section-title">${t('anyOf')} <span style="font-weight:400;font-size:12px;cursor:pointer;color:var(--text2)" onclick="addCondition('anyOf')">[+]</span></div>`
+  ;(m.anyOf||[]).forEach((c,i)=>{h+=renderCondition(c,'anyOf',i)})
+
+  h+=`<div class="section-title">${t('actions')} <span style="font-weight:400;font-size:12px;cursor:pointer;color:var(--text2)" onclick="addAction()">[+]</span></div>`
+  acts.forEach((a,i)=>{h+=renderAction(a,i)})
+  if(!acts.length) h+=`<div style="font-size:12px;color:var(--text2);padding:4px 0">${t('noconds2')}</div>`
+  area.innerHTML=h
+}
+
+function renderCondition(c,group,i){
+  let info=COND_TYPES.find(x=>x.value===c.type)||{}
+  let label=info.t?t(info.t):c.type
+  let val=''
+  if(c.values) val=c.values.join(', ')
+  else if(c.pattern) val='/'+c.pattern+'/'
+  else if(c.name) val=c.name+(c.value?' = '+c.value:'')
+  else if(c.path) val=c.path+(c.value?' = '+c.value:'')
+  else if(c.value) val=c.value
+  return `<div class="cond-item">
+    <span class="c-label">${label}</span>
+    <span class="c-val">${esc(val)}</span>
+    <span class="btn-sm danger" onclick="config.rules[${activeRule}].match['${group}'].splice(${i},1);render()">×</span>
+  </div>`
+}
+
+function renderAction(a,i){
+  let info=ACT_TYPES.find(x=>x.value===a.type)||{}
+  let label=info.t?t(info.t):a.type
+  let val=actSummary(a)
+  return `<div class="act-item">
+    <span class="a-label">${label}</span>
+    <span class="a-val">${esc(val)}</span>
+    <span class="btn-sm danger" onclick="config.rules[${activeRule}].actions.splice(${i},1);render()">×</span>
+  </div>`
+}
+
+function actSummary(a){
+  if(a.type==='block') return (a.statusCode||200)+' '+(a.body||'')
+  if(a.type==='setBody'||a.type==='replaceBodyText') return (a.value||a.body||a.search||'')
+  if(a.name&&a.type.startsWith('set')) return a.name+' = '+(a.value||'')
+  if(a.name&&a.type.startsWith('remove')) return a.name
+  return a.value||''
+}
+
+function renderPreview(){
+  let json=JSON.stringify(config,null,2)
+  document.getElementById('preview-code').textContent=json
+  document.getElementById('preview-info').textContent=config.rules.length+' rules'
+}
+
+function selectRule(i){activeRule=i;render()}
+function addRule(){
+  let n=config.rules.length+1
+  config.rules.push({id:'rule-'+String(n).padStart(3,'0'),name:'Rule '+n,enabled:true,priority:0,stage:'request',match:{allOf:[],anyOf:[]},actions:[]})
+  activeRule=config.rules.length-1;render()
+}
+function updateRule(k,v){if(activeRule>=0){config.rules[activeRule][k]=v;renderPreview();renderRuleList()}}
+function syncMeta(){config.name=document.getElementById('cfg-name').value;config.version=document.getElementById('cfg-version').value;renderPreview()}
+
+function addCondition(group){
+  let h=`<h3>${t('addCond')} ${group}</h3>
+    <div class="form-group"><label>${t('type')}</label><select id="m-type">${COND_TYPES.map(c=>`<option value="${c.value}">${c.t?t(c.t):c.value}</option>`).join('')}</select></div>
+    <div class="form-group"><label>${t('value')}</label><input id="m-v" placeholder="${t('value')}"></div>
+    <div class="form-group" id="m-v2-g" style="display:none"><label>${t('secondary')}</label><input id="m-v2" placeholder="${t('value')}"></div>
+    <div class="form-group" id="m-sel-g" style="display:none"><label>${t('select')}</label><select id="m-sel" multiple style="height:120px"></select><div class="select-info">Ctrl/Cmd + click to select multiple</div></div>
+    <div class="actions"><button class="cancel" onclick="closeModal()">${t('cancel')}</button><button class="confirm" onclick="confirmCond('${group}')">${t('add')}</button></div>`
+  openModal(h,function(){
+    let s=document.getElementById('m-type')
+    updateCondForm(s.value)
+    s.onchange=function(){updateCondForm(this.value)}
+  })
+}
+
+function updateCondForm(type){
+  let info=COND_TYPES.find(x=>x.value===type)||{}
+  let g2=document.getElementById('m-v2-g'),gs=document.getElementById('m-sel-g')
+  g2.style.display='none';gs.style.display='none'
+  if(info.select==='values'){gs.style.display='block';let sel=document.getElementById('m-sel');sel.innerHTML='';(info.options||[]).forEach(o=>sel.innerHTML+=`<option>${o}</option>`)}
+  if(info.fields&&info.fields.length>1){let n=info.fields[1];g2.style.display='block';g2.querySelector('label').textContent=n.charAt(0).toUpperCase()+n.slice(1)}
+}
+
+function confirmCond(group){
+  let type=document.getElementById('m-type').value
+  let v=document.getElementById('m-v').value
+  let c={type}
+  let info=COND_TYPES.find(x=>x.value===type)||{fields:[]}
+  if(info.select==='values'){c.values=Array.from(document.getElementById('m-sel').selectedOptions).map(o=>o.value)}
+  else if(info.fields[0]==='pattern') c.pattern=v
+  else if(info.fields[0]==='name'){c.name=v;if(info.fields[1]==='pattern') c.pattern=document.getElementById('m-v2').value;else if(info.fields[1]==='value') c.value=document.getElementById('m-v2').value}
+  else if(info.fields[0]==='path'){c.path=v;c.value=document.getElementById('m-v2').value}
+  else if(info.fields[0]==='value') c.value=v
+  if(!config.rules[activeRule].match) config.rules[activeRule].match={allOf:[],anyOf:[]}
+  if(!config.rules[activeRule].match[group]) config.rules[activeRule].match[group]=[]
+  config.rules[activeRule].match[group].push(c)
+  closeModal();render()
+}
+
+function addAction(){
+  let h=`<h3>${t('addAction')}</h3>
+    <div class="form-group"><label>${t('type')}</label><select id="a-type" onchange="updateActForm(this.value)">${ACT_TYPES.map(a=>`<option value="${a.value}">${(a.t?t(a.t):a.value)+' ('+t(a.stage)+')'}</option>`).join('')}</select></div>
+    <div id="a-fields"></div>
+    <div class="actions"><button class="cancel" onclick="closeModal()">${t('cancel')}</button><button class="confirm" onclick="confirmAction()">${t('add')}</button></div>`
+  openModal(h,function(){updateActForm(document.getElementById('a-type').value)})
+}
+
+function updateActForm(type){
+  let info=ACT_TYPES.find(x=>x.value===type)||{}
+  let h=''
+  info.fields.forEach(f=>{
+    if(info.bodyField===f){h+=`<div class="form-group"><label>${t('body')}</label><textarea id="a-${f}" placeholder="${t('body')}"></textarea></div>`}
+    else if(info.select===f&&info.options){h+=`<div class="form-group"><label>${f}</label><select id="a-${f}">${info.options.map(o=>`<option>${o}</option>`).join('')}</select></div>`}
+    else if(f==='statusCode'){h+=`<div class="form-group"><label>${t('statusCode')}</label><input id="a-${f}" value="200"></div>`}
+    else if(f==='patches'){h+=`<div class="form-group"><label>${t('patches')}</label><textarea id="a-${f}" placeholder='[{"op":"replace","path":"/x","value":"y"}]'></textarea></div>`}
+    else h+=`<div class="form-group"><label>${f.charAt(0).toUpperCase()+f.slice(1)}</label><input id="a-${f}" placeholder="${f}">`
+  })
+  document.getElementById('a-fields').innerHTML=h
+}
+
+function confirmAction(){
+  let type=document.getElementById('a-type').value
+  let info=ACT_TYPES.find(x=>x.value===type)||{}
+  let a={type}
+  info.fields.forEach(f=>{
+    let el=document.getElementById('a-'+f)
+    let v=el?el.value:''
+    if(v){
+      if(f==='statusCode') a.statusCode=parseInt(v)||200
+      else if(info.bodyField===f) a.body=v
+      else a[f]=v
+    }
+  })
+  config.rules[activeRule].actions.push(a)
+  closeModal();render()
+}
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function opts(n,cur){let s='';for(let i=0;i<=n;i++) s+=`<option value="${i}"${i===cur?' selected':''}>${i}</option>`;return s}
+
+function openModal(html,onopen){document.getElementById('modal-content').innerHTML=html;document.getElementById('modal').style.display='flex';if(onopen) setTimeout(onopen,50)}
+function closeModal(){document.getElementById('modal').style.display='none'}
+
+function loadFile(){
+  let inp=document.createElement('input');inp.type='file';inp.accept='.json'
+  inp.onchange=e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=ev=>{try{config=JSON.parse(ev.target.result);activeRule=-1;document.getElementById('cfg-name').value=config.name||'';document.getElementById('cfg-version').value=config.version||'1.0';render()}catch(e){alert('Invalid JSON')}};r.readAsText(f)}
+  inp.click()
+}
+
+function doExport(){
+  let a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(config,null,2));a.download=(config.name||'twist')+'.json';a.click()
+}
+
+function doSave(){
+  fetch('/api/save',{method:'POST',body:JSON.stringify(config)}).then(r=>r.json()).then(d=>{if(d.status==='ok') alert('Saved: '+d.file)})
+}
+
+init()
+</script>
+</html>
