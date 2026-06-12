@@ -779,6 +779,80 @@ func TestSetFormFieldValue(t *testing.T) {
 	}
 }
 
+func TestExtractBoundary(t *testing.T) {
+	tests := []struct {
+		ct   string
+		want string
+	}{
+		{`multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW`, `----WebKitFormBoundary7MA4YWxkTrZu0gW`},
+		{`multipart/form-data; boundary="abc123"`, `abc123`},
+		{`application/x-www-form-urlencoded`, ``},
+		{``, ``},
+	}
+
+	for _, tt := range tests {
+		b := extractBoundary(tt.ct)
+		if b != tt.want {
+			t.Errorf("extractBoundary(%q) = %q, want %q", tt.ct, b, tt.want)
+		}
+	}
+}
+
+func TestSetMultipartField(t *testing.T) {
+	boundary := "----Boundary"
+	body := []byte(
+		"------Boundary\r\n" +
+			`Content-Disposition: form-data; name="username"` + "\r\n" +
+			"\r\n" +
+			"olduser\r\n" +
+			"------Boundary\r\n" +
+			`Content-Disposition: form-data; name="file"; filename="a.txt"` + "\r\n" +
+			"Content-Type: text/plain\r\n" +
+			"\r\n" +
+			"file content\r\n" +
+			"------Boundary--\r\n",
+	)
+
+	result, err := setMultipartField(body, boundary, "username", "newuser")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(result), "newuser") {
+		t.Errorf("username not updated: %s", string(result))
+	}
+	if !strings.Contains(string(result), "olduser") {
+		t.Log("olduser still present (expected if field had no value)")
+	}
+}
+
+func TestRemoveMultipartField(t *testing.T) {
+	boundary := "----Boundary"
+	body := []byte(
+		"------Boundary\r\n" +
+			`Content-Disposition: form-data; name="username"` + "\r\n" +
+			"\r\n" +
+			"john\r\n" +
+			"------Boundary\r\n" +
+			`Content-Disposition: form-data; name="csrf"` + "\r\n" +
+			"\r\n" +
+			"abc123\r\n" +
+			"------Boundary--\r\n",
+	)
+
+	result, err := removeMultipartField(body, boundary, "csrf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(result), "csrf") {
+		t.Errorf("csrf field not removed: %s", string(result))
+	}
+	if !strings.Contains(string(result), "username") {
+		t.Error("username should still be present")
+	}
+}
+
 func TestRemoveFormFieldValue(t *testing.T) {
 	body := []byte("name=test&debug=true&age=10")
 	result := removeFormFieldValue(body, "debug")

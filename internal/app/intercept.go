@@ -28,6 +28,7 @@ var _ struct {
 }
 
 const maxBodySize = 5 * 1024 * 1024
+const maxResponseBodySize = 10 * 1024 * 1024
 
 var regexCache sync.Map
 
@@ -184,6 +185,14 @@ func (i *Intercept) shouldBypass(ctx context.Context, ev *fetch.RequestPausedRep
 
 func (i *Intercept) continueEvent(ctx context.Context, requestID fetch.RequestID, stage string, headers []fetch.HeaderEntry) {
 	if stage == "response" {
+		if len(headers) > 0 {
+			args := fetch.NewFulfillRequestArgs(requestID, 200)
+			args.SetResponseHeaders(headers)
+			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+				log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("fulfill response failed")
+			}
+			return
+		}
 		args := fetch.NewContinueResponseArgs(requestID)
 		if err := i.cdp.TargetClient().Fetch.ContinueResponse(ctx, args); err != nil {
 			log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue response failed")
@@ -578,44 +587,90 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			return
 
 		case "setCookie":
+			if stage == "response" {
+				newHeaders := modifyResponseCookie(ev.ResponseHeaders, action.Name, fmt.Sprintf("%v", action.Value))
+				logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("set response cookie")
+				i.continueEvent(ctx, ev.RequestID, stage, newHeaders)
+				return
+			}
 			newHeaders := modifyCookieHeader(hdrs, action.Name, fmt.Sprintf("%v", action.Value))
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("cookie", action.Name).
-				Msg("set cookie")
+			logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("set cookie")
 			i.continueRequest(ctx, ev.RequestID, newHeaders)
 			return
 
 		case "removeCookie":
+			if stage == "response" {
+				newHeaders := removeResponseCookie(ev.ResponseHeaders, action.Name)
+				logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("remove response cookie")
+				i.continueEvent(ctx, ev.RequestID, stage, newHeaders)
+				return
+			}
 			newHeaders := removeCookieFromHeader(hdrs, action.Name)
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("cookie", action.Name).
-				Msg("remove cookie")
+			logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("remove cookie")
 			i.continueRequest(ctx, ev.RequestID, newHeaders)
 			return
 
 		case "setFormField":
+			contentType := headerGet(hdrs, "Content-Type")
+			if strings.Contains(contentType, "multipart/form-data") {
+				boundary := extractBoundary(contentType)
+				if boundary == "" {
+					logger.Warn().Msg("setFormField: cannot extract multipart boundary")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				body, ok := getPostData(ev.Request)
+				if !ok {
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				newBody, err := setMultipartField(body, boundary, action.Name, fmt.Sprintf("%v", action.Value))
+				if err != nil {
+					logger.Error().Err(err).Msg("setFormField: multipart modify failed")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("set multipart form field")
+				i.continueRequestPost(ctx, ev.RequestID, newBody)
+				return
+			}
 			body, ok := getPostData(ev.Request)
 			if ok {
 				body = setFormFieldValue(body, action.Name, fmt.Sprintf("%v", action.Value))
 			}
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("field", action.Name).
-				Msg("set form field")
+			logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("set form field")
 			i.continueRequestPost(ctx, ev.RequestID, body)
 			return
 
 		case "removeFormField":
+			contentType := headerGet(hdrs, "Content-Type")
+			if strings.Contains(contentType, "multipart/form-data") {
+				boundary := extractBoundary(contentType)
+				if boundary == "" {
+					logger.Warn().Msg("removeFormField: cannot extract multipart boundary")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				body, ok := getPostData(ev.Request)
+				if !ok {
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				newBody, err := removeMultipartField(body, boundary, action.Name)
+				if err != nil {
+					logger.Error().Err(err).Msg("removeFormField: multipart remove failed")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("remove multipart form field")
+				i.continueRequestPost(ctx, ev.RequestID, newBody)
+				return
+			}
 			body, ok := getPostData(ev.Request)
 			if ok {
 				body = removeFormFieldValue(body, action.Name)
 			}
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("field", action.Name).
-				Msg("remove form field")
+			logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("remove form field")
 			i.continueRequestPost(ctx, ev.RequestID, body)
 			return
 
@@ -651,8 +706,24 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 				return
 			}
 
+			headers := []fetch.HeaderEntry{}
+			contentType := headerGet(hdrs, "Content-Type")
+			if strings.HasPrefix(body, "{") || strings.HasPrefix(body, "[") {
+				if !strings.Contains(contentType, "json") {
+					headers = append(headers, fetch.HeaderEntry{Name: "Content-Type", Value: "application/json"})
+					logger.Debug().Str("rule", rule.ID).Msg("set Content-Type to application/json")
+				}
+			}
+
 			logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Msg("set request body")
-			i.continueRequestPost(ctx, ev.RequestID, []byte(body))
+			args := fetch.NewContinueRequestArgs(ev.RequestID)
+			args.SetPostData([]byte(body))
+			if len(headers) > 0 {
+				args.SetHeaders(headers)
+			}
+			if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
+				logger.Error().Err(err).Msg("set body failed")
+			}
 			return
 
 		case "replaceBodyText":
@@ -838,13 +909,23 @@ func buildHeaderEntries(headers map[string]string, skipKey, newValue string) []f
 }
 
 func getPostData(req network.Request) ([]byte, bool) {
-	if req.PostData != nil && *req.PostData != "" {
-		return []byte(*req.PostData), true
+	s := getPostDataStr(req)
+	if s == "" {
+		return nil, false
 	}
-	return nil, false
+	return []byte(s), true
 }
 
 func getPostDataStr(req network.Request) string {
+	if req.HasPostData != nil && *req.HasPostData && len(req.PostDataEntries) > 0 {
+		var parts []string
+		for _, e := range req.PostDataEntries {
+			if e.Bytes != nil {
+				parts = append(parts, *e.Bytes)
+			}
+		}
+		return strings.Join(parts, "")
+	}
 	if req.PostData != nil {
 		return *req.PostData
 	}
@@ -893,10 +974,77 @@ func removeFormFieldValue(body []byte, name string) []byte {
 	return []byte(vals.Encode())
 }
 
+func extractBoundary(contentType string) string {
+	for _, part := range strings.Split(contentType, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "boundary=") {
+			b := strings.TrimPrefix(part, "boundary=")
+			b = strings.Trim(b, "\"")
+			return b
+		}
+	}
+	return ""
+}
+
+func setMultipartField(body []byte, boundary, fieldName, newValue string) ([]byte, error) {
+	return modifyMultipart(body, boundary, fieldName, func(lines []string) ([]string, bool) {
+		for i, line := range lines {
+			if strings.Contains(line, `name="`+fieldName+`"`) {
+				for j := i + 1; j < len(lines); j++ {
+					if strings.TrimSpace(lines[j]) == "" && j+1 < len(lines) {
+						lines[j+1] = newValue
+						return lines, true
+					}
+				}
+			}
+		}
+		return lines, false
+	})
+}
+
+func removeMultipartField(body []byte, boundary, fieldName string) ([]byte, error) {
+	return modifyMultipart(body, boundary, fieldName, func(lines []string) ([]string, bool) {
+		start := -1
+		end := -1
+		for i, line := range lines {
+			if start == -1 && strings.Contains(line, `name="`+fieldName+`"`) {
+				start = i - 1
+			}
+			if start != -1 && strings.HasPrefix(line, "--"+boundary) && i > start+1 {
+				end = i
+				break
+			}
+		}
+		if start >= 0 && end > start {
+			for i := start; i < end; i++ {
+				lines[i] = ""
+			}
+			return lines, true
+		}
+		return lines, false
+	})
+}
+
+func modifyMultipart(body []byte, boundary, fieldName string, fn func([]string) ([]string, bool)) ([]byte, error) {
+	text := string(body)
+	lines := strings.Split(text, "\r\n")
+	lines, _ = fn(lines)
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return []byte(strings.Join(result, "\r\n")), nil
+}
+
 func (i *Intercept) getResponseBody(ctx context.Context, requestID fetch.RequestID) (string, error) {
 	reply, err := i.cdp.TargetClient().Fetch.GetResponseBody(ctx, fetch.NewGetResponseBodyArgs(requestID))
 	if err != nil {
 		return "", err
+	}
+	if len(reply.Body) > maxResponseBodySize {
+		return "", fmt.Errorf("response body too large: %d bytes", len(reply.Body))
 	}
 	body := reply.Body
 	if reply.Base64Encoded {
@@ -962,4 +1110,44 @@ func applyJSONPatch(body string, patches []JSONPatch) (string, error) {
 func toGJSONPath(path string) string {
 	p := strings.TrimPrefix(path, "/")
 	return strings.ReplaceAll(p, "/", ".")
+}
+
+func modifyResponseCookie(headers []fetch.HeaderEntry, name, value string) []fetch.HeaderEntry {
+	result := make([]fetch.HeaderEntry, 0, len(headers)+1)
+	found := false
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "Set-Cookie") {
+			cookieName := name
+			if idx := strings.Index(h.Value, "="); idx > 0 {
+				cookieName = h.Value[:idx]
+			}
+			if strings.EqualFold(cookieName, name) {
+				result = append(result, fetch.HeaderEntry{Name: "Set-Cookie", Value: name + "=" + value})
+				found = true
+				continue
+			}
+		}
+		result = append(result, h)
+	}
+	if !found {
+		result = append(result, fetch.HeaderEntry{Name: "Set-Cookie", Value: name + "=" + value})
+	}
+	return result
+}
+
+func removeResponseCookie(headers []fetch.HeaderEntry, name string) []fetch.HeaderEntry {
+	result := make([]fetch.HeaderEntry, 0, len(headers))
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "Set-Cookie") {
+			cookieName := name
+			if idx := strings.Index(h.Value, "="); idx > 0 {
+				cookieName = h.Value[:idx]
+			}
+			if strings.EqualFold(cookieName, name) {
+				continue
+			}
+		}
+		result = append(result, h)
+	}
+	return result
 }
