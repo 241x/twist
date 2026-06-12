@@ -222,7 +222,7 @@ func (c *CDP) waitForBrowser(ctx context.Context) error {
 	deadline := time.Now().Add(time.Duration(c.timeout) * time.Second)
 	for {
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out after %ds", c.timeout)
+			return fmt.Errorf("timed out after %ds: unable to connect to browser at %s:%d. Ensure the browser is running with remote debugging enabled (--remote-debugging-port=%d), or use --launch to start one automatically", c.timeout, c.host, c.port, c.port)
 		}
 
 		ver, err := c.devt.Version(ctx)

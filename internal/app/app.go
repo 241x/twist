@@ -52,6 +52,13 @@ func (a *App) Run(ctx context.Context) error {
 		case <-a.signals:
 			cancel()
 		case <-ctx.Done():
+			return
+		}
+
+		select {
+		case <-a.signals:
+			os.Exit(1)
+		case <-ctx.Done():
 		}
 	}()
 
