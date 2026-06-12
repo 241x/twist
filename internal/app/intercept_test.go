@@ -540,6 +540,162 @@ func BenchmarkMatchCondition(b *testing.B) {
 	}
 }
 
-func helperStringContains(s, substr string) bool {
-	return strings.Contains(s, substr)
+func TestParseQuery(t *testing.T) {
+	tests := []struct {
+		url  string
+		key  string
+		want string
+	}{
+		{"https://example.com?page=1&size=10", "page", "1"},
+		{"https://example.com?page=1&size=10", "size", "10"},
+		{"https://example.com?name=hello%20world", "name", "hello world"},
+		{"https://example.com?flag", "flag", ""},
+		{"https://example.com?a=1&b=2#section", "a", "1"},
+		{"https://example.com", "none", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			q := parseQuery(tt.url)
+			got := q[tt.key]
+			if got != tt.want {
+				t.Errorf("%q = %q, want %q", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCookies(t *testing.T) {
+	hdrs := map[string]string{
+		"Cookie": "sessionId=abc123; theme=dark; token=xyz",
+	}
+	cookies := parseCookies(hdrs)
+
+	if cookies["sessionId"] != "abc123" {
+		t.Errorf("sessionId = %q", cookies["sessionId"])
+	}
+	if cookies["theme"] != "dark" {
+		t.Errorf("theme = %q", cookies["theme"])
+	}
+	if cookies["token"] != "xyz" {
+		t.Errorf("token = %q", cookies["token"])
+	}
+	if _, ok := cookies["nonexistent"]; ok {
+		t.Error("should not have nonexistent cookie")
+	}
+}
+
+func TestParseCookiesNoHeader(t *testing.T) {
+	hdrs := map[string]string{}
+	cookies := parseCookies(hdrs)
+	if len(cookies) != 0 {
+		t.Errorf("expected empty cookies, got %d", len(cookies))
+	}
+}
+
+func TestMatchQueryConditions(t *testing.T) {
+	i := &Intercept{}
+
+	ev := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:    "https://example.com/api?page=1&size=10&debug=true",
+			Method: "GET",
+		},
+	}
+
+	t.Run("queryExists", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "queryExists", Name: "page"}) {
+			t.Error("queryExists should match")
+		}
+		if i.matchCondition(ev, Condition{Type: "queryExists", Name: "none"}) {
+			t.Error("queryExists should not match non-existent param")
+		}
+	})
+
+	t.Run("queryNotExists", func(t *testing.T) {
+		if i.matchCondition(ev, Condition{Type: "queryNotExists", Name: "page"}) {
+			t.Error("queryNotExists should not match existing param")
+		}
+		if !i.matchCondition(ev, Condition{Type: "queryNotExists", Name: "none"}) {
+			t.Error("queryNotExists should match non-existent param")
+		}
+	})
+
+	t.Run("queryEquals", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "queryEquals", Name: "size", Value: "10"}) {
+			t.Error("queryEquals should match")
+		}
+		if i.matchCondition(ev, Condition{Type: "queryEquals", Name: "size", Value: "20"}) {
+			t.Error("queryEquals should not match different value")
+		}
+	})
+
+	t.Run("queryContains", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "queryContains", Name: "debug", Value: "tru"}) {
+			t.Error("queryContains should match")
+		}
+	})
+
+	t.Run("queryRegex", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "queryRegex", Name: "page", Pattern: `^\d+$`}) {
+			t.Error("queryRegex should match")
+		}
+		if i.matchCondition(ev, Condition{Type: "queryRegex", Name: "page", Pattern: `^[a-z]+$`}) {
+			t.Error("queryRegex should not match")
+		}
+	})
+}
+
+func TestMatchCookieConditions(t *testing.T) {
+	hdrs := network.Headers(`{"Cookie": "sessionId=abc123; theme=dark"}`)
+	ev := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:     "https://example.com/api",
+			Method:  "GET",
+			Headers: hdrs,
+		},
+	}
+
+	i := &Intercept{}
+
+	t.Run("cookieExists", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "cookieExists", Name: "sessionId"}) {
+			t.Error("cookieExists should match")
+		}
+		if i.matchCondition(ev, Condition{Type: "cookieExists", Name: "nonexistent"}) {
+			t.Error("cookieExists should not match")
+		}
+	})
+
+	t.Run("cookieEquals", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "cookieEquals", Name: "theme", Value: "dark"}) {
+			t.Error("cookieEquals should match")
+		}
+	})
+
+	t.Run("cookieContains", func(t *testing.T) {
+		if !i.matchCondition(ev, Condition{Type: "cookieContains", Name: "sessionId", Value: "abc"}) {
+			t.Error("cookieContains should match")
+		}
+	})
+}
+
+func TestSetQueryParamValue(t *testing.T) {
+	result := setQueryParamValue("https://example.com?page=1", "size", "10")
+	if !strings.Contains(result, "size=10") {
+		t.Errorf("missing size param: %s", result)
+	}
+	if !strings.Contains(result, "page=1") {
+		t.Errorf("missing existing param: %s", result)
+	}
+}
+
+func TestRemoveQueryParamValue(t *testing.T) {
+	result := removeQueryParamValue("https://example.com?page=1&debug=true", "debug")
+	if strings.Contains(result, "debug") {
+		t.Errorf("debug param not removed: %s", result)
+	}
+	if !strings.Contains(result, "page=1") {
+		t.Errorf("page param lost: %s", result)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/mafredri/cdp/protocol/fetch"
 	"github.com/mafredri/cdp/protocol/network"
-	"github.com/rs/zerolog"
 
 	"github.com/241x/twist/internal/log"
 )
@@ -161,6 +161,15 @@ func (i *Intercept) continueRequest(ctx context.Context, requestID fetch.Request
 	}
 }
 
+func (i *Intercept) continueRequestURL(ctx context.Context, requestID fetch.RequestID, newURL string) {
+	args := fetch.NewContinueRequestArgs(requestID)
+	args.SetURL(newURL)
+
+	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
+		log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue request with URL failed")
+	}
+}
+
 func (i *Intercept) matchRules(ev *fetch.RequestPausedReply, stage string) *Rule {
 	rules := i.config.Rules
 	if len(rules) == 0 {
@@ -255,14 +264,111 @@ func (i *Intercept) matchCondition(ev *fetch.RequestPausedReply, cond Condition)
 		val := headerGet(hdrs, cond.Name)
 		return val != "" && matchRegex(cond.Pattern, val)
 	case "cookieExists", "cookieNotExists", "cookieEquals", "cookieContains", "cookieRegex":
-		return false
+		cookies := parseCookies(hdrs)
+		return matchCookie(cond, cookies)
 	case "queryExists", "queryNotExists", "queryEquals", "queryContains", "queryRegex":
-		return false
+		queries := parseQuery(ev.Request.URL)
+		return matchQuery(cond, queries)
 	case "bodyContains", "bodyRegex", "bodyJsonPath":
 		return false
 	default:
 		return false
 	}
+}
+
+func matchCookie(cond Condition, cookies map[string]string) bool {
+	switch cond.Type {
+	case "cookieExists":
+		_, ok := cookies[cond.Name]
+		return ok
+	case "cookieNotExists":
+		_, ok := cookies[cond.Name]
+		return !ok
+	case "cookieEquals":
+		val, ok := cookies[cond.Name]
+		return ok && val == cond.Value
+	case "cookieContains":
+		val, ok := cookies[cond.Name]
+		return ok && strings.Contains(val, cond.Value)
+	case "cookieRegex":
+		val, ok := cookies[cond.Name]
+		return ok && matchRegex(cond.Pattern, val)
+	}
+	return false
+}
+
+func matchQuery(cond Condition, queries map[string]string) bool {
+	switch cond.Type {
+	case "queryExists":
+		_, ok := queries[cond.Name]
+		return ok
+	case "queryNotExists":
+		_, ok := queries[cond.Name]
+		return !ok
+	case "queryEquals":
+		val, ok := queries[cond.Name]
+		return ok && val == cond.Value
+	case "queryContains":
+		val, ok := queries[cond.Name]
+		return ok && strings.Contains(val, cond.Value)
+	case "queryRegex":
+		val, ok := queries[cond.Name]
+		return ok && matchRegex(cond.Pattern, val)
+	}
+	return false
+}
+
+func parseCookies(headers map[string]string) map[string]string {
+	val := headerGet(headers, "Cookie")
+	if val == "" {
+		return nil
+	}
+
+	cookies := make(map[string]string)
+	pairs := strings.Split(val, ";")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		idx := strings.Index(pair, "=")
+		if idx < 0 {
+			cookies[pair] = ""
+		} else {
+			cookies[pair[:idx]] = pair[idx+1:]
+		}
+	}
+	return cookies
+}
+
+func parseQuery(rawURL string) map[string]string {
+	queries := make(map[string]string)
+	idx := strings.Index(rawURL, "?")
+	if idx < 0 {
+		return queries
+	}
+
+	raw := rawURL[idx+1:]
+	fragIdx := strings.Index(raw, "#")
+	if fragIdx >= 0 {
+		raw = raw[:fragIdx]
+	}
+
+	pairs := strings.Split(raw, "&")
+	for _, pair := range pairs {
+		parts := strings.SplitN(pair, "=", 2)
+		if parts[0] == "" {
+			continue
+		}
+		k, _ := url.QueryUnescape(parts[0])
+		if len(parts) == 2 {
+			v, _ := url.QueryUnescape(parts[1])
+			queries[k] = v
+		} else {
+			queries[k] = ""
+		}
+	}
+	return queries
 }
 
 func parseHeaders(raw network.Headers) map[string]string {
@@ -392,6 +498,56 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			}
 			return
 
+		case "setQueryParam":
+			newURL := setQueryParamValue(ev.Request.URL, action.Name, fmt.Sprintf("%v", action.Value))
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("param", action.Name).
+				Msg("set query param")
+			i.continueRequestURL(ctx, ev.RequestID, newURL)
+			return
+
+		case "removeQueryParam":
+			newURL := removeQueryParamValue(ev.Request.URL, action.Name)
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("param", action.Name).
+				Msg("remove query param")
+			i.continueRequestURL(ctx, ev.RequestID, newURL)
+			return
+
+		case "setCookie":
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("cookie", action.Name).
+				Msg("set cookie")
+			i.continueRequest(ctx, ev.RequestID, nil)
+			return
+
+		case "removeCookie":
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("cookie", action.Name).
+				Msg("remove cookie")
+			i.continueRequest(ctx, ev.RequestID, nil)
+			return
+
+		case "setFormField":
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("field", action.Name).
+				Msg("set form field")
+			i.continueRequest(ctx, ev.RequestID, nil)
+			return
+
+		case "removeFormField":
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("field", action.Name).
+				Msg("remove form field")
+			i.continueRequest(ctx, ev.RequestID, nil)
+			return
+
 		default:
 			logger.Warn().
 				Str("rule", rule.ID).
@@ -414,4 +570,24 @@ func sortByPriority(rules []Rule) {
 	}
 }
 
-var _ zerolog.Logger
+func setQueryParamValue(rawURL, name, value string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	q.Set(name, value)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func removeQueryParamValue(rawURL, name string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	q.Del(name)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
