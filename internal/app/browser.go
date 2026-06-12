@@ -79,6 +79,11 @@ func buildCommand(ctx context.Context, execPath string, port int, args []string,
 		"--no-default-browser-check",
 	}
 
+	tmpDir, _ := os.MkdirTemp("", "twist-browser-*")
+	if tmpDir != "" {
+		defaultArgs = append(defaultArgs, "--user-data-dir="+tmpDir)
+	}
+
 	allArgs := append(defaultArgs, args...)
 
 	if url != "" {

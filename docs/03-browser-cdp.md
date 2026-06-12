@@ -24,7 +24,7 @@ twist 自动追加以下参数：
 --no-default-browser-check
 ```
 
-用户可通过 `--launch-args` 追加额外参数（如 `--headless=new`）。**不自动设置 `--user-data-dir`**，浏览器使用默认用户数据目录。
+用户可通过 `--launch-args` 追加额外参数（如 `--headless=new`）。**自动使用临时用户数据目录**，确保独立进程和端口绑定，不与已运行的浏览器实例冲突。
 
 ### 端口检测
 
