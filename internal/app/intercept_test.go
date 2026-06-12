@@ -957,3 +957,87 @@ func TestContentLengthBypass(t *testing.T) {
 		t.Error("1KB request should not be bypassed")
 	}
 }
+
+func TestMatchBodyContains(t *testing.T) {
+	i := &Intercept{}
+
+	postData := `{"username":"admin","password":"secret"}`
+	ev := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:      "https://example.com/login",
+			Method:   "POST",
+			PostData: &postData,
+		},
+	}
+
+	cond := Condition{Type: "bodyContains", Value: "admin"}
+	if !i.matchCondition(ev, cond) {
+		t.Error("bodyContains should match 'admin'")
+	}
+
+	cond2 := Condition{Type: "bodyContains", Value: "nonexistent"}
+	if i.matchCondition(ev, cond2) {
+		t.Error("bodyContains should not match 'nonexistent'")
+	}
+
+	ev2 := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:    "https://example.com/api",
+			Method: "GET",
+		},
+	}
+	if i.matchCondition(ev2, cond) {
+		t.Error("bodyContains should not match on empty body")
+	}
+}
+
+func TestMatchBodyRegex(t *testing.T) {
+	i := &Intercept{}
+
+	postData := `{"userId":123,"name":"john"}`
+	ev := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:      "https://example.com/api",
+			Method:   "POST",
+			PostData: &postData,
+		},
+	}
+
+	cond := Condition{Type: "bodyRegex", Pattern: `"userId":\s*\d+`}
+	if !i.matchCondition(ev, cond) {
+		t.Error("bodyRegex should match userId pattern")
+	}
+
+	cond2 := Condition{Type: "bodyRegex", Pattern: `"role":\s*"admin"`}
+	if i.matchCondition(ev, cond2) {
+		t.Error("bodyRegex should not match role pattern")
+	}
+}
+
+func TestMatchBodyJsonPath(t *testing.T) {
+	i := &Intercept{}
+
+	postData := `{"user":{"id":123,"role":"admin"}}`
+	ev := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:      "https://example.com/api",
+			Method:   "POST",
+			PostData: &postData,
+		},
+	}
+
+	cond := Condition{Type: "bodyJsonPath", Path: "/user/role", Value: "admin"}
+	if !i.matchCondition(ev, cond) {
+		t.Error("bodyJsonPath should match /user/role = admin")
+	}
+
+	cond2 := Condition{Type: "bodyJsonPath", Path: "/user/id", Value: "999"}
+	if i.matchCondition(ev, cond2) {
+		t.Error("bodyJsonPath should not match wrong id")
+	}
+
+	cond3 := Condition{Type: "bodyJsonPath", Path: "/user/nonexistent", Value: "x"}
+	if i.matchCondition(ev, cond3) {
+		t.Error("bodyJsonPath should not match nonexistent path")
+	}
+}

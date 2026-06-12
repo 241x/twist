@@ -314,7 +314,8 @@ func (i *Intercept) matchCondition(ev *fetch.RequestPausedReply, cond Condition)
 		queries := parseQuery(ev.Request.URL)
 		return matchQuery(cond, queries)
 	case "bodyContains", "bodyRegex", "bodyJsonPath":
-		return false
+		body := getPostDataStr(ev.Request)
+		return matchBody(cond, body)
 	default:
 		return false
 	}
@@ -822,6 +823,44 @@ func getPostData(req network.Request) ([]byte, bool) {
 		return []byte(*req.PostData), true
 	}
 	return nil, false
+}
+
+func getPostDataStr(req network.Request) string {
+	if req.PostData != nil {
+		return *req.PostData
+	}
+	return ""
+}
+
+func matchBody(cond Condition, body string) bool {
+	if body == "" {
+		return false
+	}
+
+	switch cond.Type {
+	case "bodyContains":
+		return strings.Contains(body, cond.Value)
+	case "bodyRegex":
+		return matchRegex(cond.Pattern, body)
+	case "bodyJsonPath":
+		return matchBodyJsonPath(body, cond.Path, cond.Value)
+	}
+	return false
+}
+
+func matchBodyJsonPath(body, path, expected string) bool {
+	var doc any
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return false
+	}
+
+	val, err := patchGet(doc, path)
+	if err != nil {
+		return false
+	}
+
+	valStr := fmt.Sprintf("%v", val)
+	return valStr == expected
 }
 
 func setFormFieldValue(body []byte, name, value string) []byte {
