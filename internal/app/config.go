@@ -179,7 +179,7 @@ func validateAction(a Action) error {
 		if a.Value == nil {
 			return fmt.Errorf("action %q requires field 'value'", a.Type)
 		}
-	case "setBody":
+	case "setBody", "appendBody":
 		if a.Value == nil {
 			return fmt.Errorf("action %q requires field 'value'", a.Type)
 		}

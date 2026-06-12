@@ -726,6 +726,39 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			}
 			return
 
+		case "appendBody":
+			appendContent := action.Body
+			if appendContent == "" {
+				appendContent = fmt.Sprintf("%v", action.Value)
+			}
+
+			if stage == "response" {
+				body, err := i.getResponseBody(ctx, ev.RequestID)
+				if err != nil {
+					logger.Error().Err(err).Msg("failed to get response body for append")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				newBody := body + appendContent
+				logger.Debug().Str("rule", rule.ID).Int("origLen", len(body)).Int("newLen", len(newBody)).Msg("append response body")
+				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+				args.SetBody([]byte(newBody))
+				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+					logger.Error().Err(err).Msg("fulfill request failed")
+				}
+				return
+			}
+
+			postData, ok := getPostData(ev.Request)
+			origBody := ""
+			if ok {
+				origBody = string(postData)
+			}
+			newBody := origBody + appendContent
+			logger.Debug().Str("rule", rule.ID).Int("origLen", len(origBody)).Int("newLen", len(newBody)).Msg("append request body")
+			i.continueRequestPost(ctx, ev.RequestID, []byte(newBody))
+			return
+
 		case "replaceBodyText":
 			if stage == "response" {
 				body, err := i.getResponseBody(ctx, ev.RequestID)

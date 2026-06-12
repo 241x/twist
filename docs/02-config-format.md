@@ -189,6 +189,7 @@ Twist 使用 JSON 格式的规则配置文件。
 | `setCookie` | `name`, `value` | 设置 Cookie（请求阶段修改 Cookie 头，响应阶段修改 Set-Cookie 头） |
 | `removeCookie` | `name` | 移除 Cookie |
 | `setBody` | `value`, `encoding` | 替换请求体或响应体 |
+| `appendBody` | `value` | 向请求体或响应体末尾追加内容 |
 | `replaceBodyText` | `search`, `replace`, `replaceAll` | 字符串替换请求体或响应体 |
 | `patchBodyJson` | `patches` | JSON Patch 修改请求体或响应体（RFC 6902） |
 

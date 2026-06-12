@@ -121,7 +121,7 @@ const T={
     block:'Block request',setUrl:'Change URL',setMethod:'Change method',setHeader:'Set header',removeHeader:'Remove header',
     setQueryParam:'Set query param',removeQueryParam:'Remove query param',
     setCookie:'Set cookie',removeCookie:'Remove cookie',setFormField:'Set form field',removeFormField:'Remove form field',
-    setStatus:'Set status code',setBody:'Replace response body',replaceBodyText:'Replace text in body',patchBodyJson:'JSON Patch body',
+    setStatus:'Set status code',setBody:'Replace response body',appendBody:'Append to body',replaceBodyText:'Replace text in body',patchBodyJson:'JSON Patch body',
   },
   zh:{
     rules:'规则',preview:'预览',open:'打开',export:'导出',save:'保存',
@@ -142,7 +142,7 @@ const T={
     block:'阻止请求',setUrl:'修改 URL',setMethod:'修改方法',setHeader:'设置 Header',removeHeader:'删除 Header',
     setQueryParam:'设置 Query',removeQueryParam:'删除 Query',
     setCookie:'设置 Cookie',removeCookie:'删除 Cookie',setFormField:'设置表单',removeFormField:'删除表单',
-    setStatus:'修改状态码',setBody:'替换响应体',replaceBodyText:'替换响应体文本',patchBodyJson:'JSON Patch 修改',
+    setStatus:'修改状态码',setBody:'替换响应体',appendBody:'追加到Body',replaceBodyText:'替换响应体文本',patchBodyJson:'JSON Patch 修改',
   }
 }
 
@@ -195,6 +195,7 @@ const ACT_TYPES=[
   {value:'removeFormField',t:'removeFormField',stage:'request',fields:['name']},
   {value:'setStatus',t:'setStatus',stage:'response',fields:['value']},
   {value:'setBody',t:'setBody',fields:['value'],bodyField:'value'},
+  {value:'appendBody',t:'appendBody',fields:['value'],bodyField:'value'},
   {value:'replaceBodyText',t:'replaceBodyText',fields:['search','replace']},
   {value:'patchBodyJson',t:'patchBodyJson',fields:['patches']},
 ]
@@ -304,7 +305,7 @@ function renderAction(a,i){
 
 function actSummary(a){
   if(a.type==='block') return (a.statusCode||200)+' '+(a.body||'')
-  if(a.type==='setBody'||a.type==='replaceBodyText') return (a.value||a.body||a.search||'')
+  if(a.type==='setBody'||a.type==='appendBody'||a.type==='replaceBodyText') return (a.value||a.body||a.search||'')
   if(a.type==='patchBodyJson') return (a.patches||[]).map(p=>p.op+' '+p.path).join(', ')
   if(a.name&&a.type.startsWith('set')) return a.name+' = '+(a.value||'')
   if(a.name&&a.type.startsWith('remove')) return a.name
