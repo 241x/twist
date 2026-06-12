@@ -185,18 +185,18 @@ const ACT_TYPES=[
   {value:'block',t:'block',stage:'request',fields:['statusCode','body'],bodyField:'body'},
   {value:'setUrl',t:'setUrl',stage:'request',fields:['value']},
   {value:'setMethod',t:'setMethod',stage:'request',fields:['value'],select:'value',options:['GET','POST','PUT','DELETE','PATCH','HEAD','OPTIONS']},
-  {value:'setHeader',t:'setHeader',stage:'request',fields:['name','value']},
-  {value:'removeHeader',t:'removeHeader',stage:'request',fields:['name']},
+  {value:'setHeader',t:'setHeader',fields:['name','value']},
+  {value:'removeHeader',t:'removeHeader',fields:['name']},
   {value:'setQueryParam',t:'setQueryParam',stage:'request',fields:['name','value']},
   {value:'removeQueryParam',t:'removeQueryParam',stage:'request',fields:['name']},
-  {value:'setCookie',t:'setCookie',stage:'request',fields:['name','value']},
-  {value:'removeCookie',t:'removeCookie',stage:'request',fields:['name']},
+  {value:'setCookie',t:'setCookie',fields:['name','value']},
+  {value:'removeCookie',t:'removeCookie',fields:['name']},
   {value:'setFormField',t:'setFormField',stage:'request',fields:['name','value']},
   {value:'removeFormField',t:'removeFormField',stage:'request',fields:['name']},
   {value:'setStatus',t:'setStatus',stage:'response',fields:['value']},
-  {value:'setBody',t:'setBody',stage:'response',fields:['value'],bodyField:'value'},
-  {value:'replaceBodyText',t:'replaceBodyText',stage:'response',fields:['search','replace']},
-  {value:'patchBodyJson',t:'patchBodyJson',stage:'response',fields:['patches']},
+  {value:'setBody',t:'setBody',fields:['value'],bodyField:'value'},
+  {value:'replaceBodyText',t:'replaceBodyText',fields:['search','replace']},
+  {value:'patchBodyJson',t:'patchBodyJson',fields:['patches']},
 ]
 
 let config={
@@ -305,6 +305,7 @@ function renderAction(a,i){
 function actSummary(a){
   if(a.type==='block') return (a.statusCode||200)+' '+(a.body||'')
   if(a.type==='setBody'||a.type==='replaceBodyText') return (a.value||a.body||a.search||'')
+  if(a.type==='patchBodyJson') return (a.patches||[]).map(p=>p.op+' '+p.path).join(', ')
   if(a.name&&a.type.startsWith('set')) return a.name+' = '+(a.value||'')
   if(a.name&&a.type.startsWith('remove')) return a.name
   return a.value||''
@@ -364,8 +365,10 @@ function confirmCond(group){
 }
 
 function addAction(){
+  let stage=config.rules[activeRule]?config.rules[activeRule].stage:'request'
+  let acts=ACT_TYPES.filter(a=>!a.stage||a.stage===stage)
   let h=`<h3>${t('addAction')}</h3>
-    <div class="form-group"><label>${t('type')}</label><select id="a-type" onchange="updateActForm(this.value)">${ACT_TYPES.map(a=>`<option value="${a.value}">${(a.t?t(a.t):a.value)+' ('+t(a.stage)+')'}</option>`).join('')}</select></div>
+    <div class="form-group"><label>${t('type')}</label><select id="a-type" onchange="updateActForm(this.value)">${acts.map(a=>`<option value="${a.value}">${(a.t?t(a.t):a.value)}</option>`).join('')}</select></div>
     <div id="a-fields"></div>
     <div class="actions"><button class="cancel" onclick="closeModal()">${t('cancel')}</button><button class="confirm" onclick="confirmAction()">${t('add')}</button></div>`
   openModal(h,function(){updateActForm(document.getElementById('a-type').value)})
@@ -378,10 +381,43 @@ function updateActForm(type){
     if(info.bodyField===f){h+=`<div class="form-group"><label>${t('body')}</label><textarea id="a-${f}" placeholder="${t('body')}"></textarea></div>`}
     else if(info.select===f&&info.options){h+=`<div class="form-group"><label>${f}</label><select id="a-${f}">${info.options.map(o=>`<option>${o}</option>`).join('')}</select></div>`}
     else if(f==='statusCode'){h+=`<div class="form-group"><label>${t('statusCode')}</label><input id="a-${f}" value="200"></div>`}
-    else if(f==='patches'){h+=`<div class="form-group"><label>${t('patches')}</label><textarea id="a-${f}" placeholder='[{"op":"replace","path":"/x","value":"y"}]'></textarea></div>`}
+    else if(f==='patches'){
+      h+=`<div class="form-group"><label>${t('patches')}</label><div id="patch-list" style="margin:4px 0"></div><div class="btn-link" onclick="addPatch()">+ Add patch</div></div>`
+      window._patches=[]
+    }
     else h+=`<div class="form-group"><label>${f.charAt(0).toUpperCase()+f.slice(1)}</label><input id="a-${f}" placeholder="${f}">`
   })
   document.getElementById('a-fields').innerHTML=h
+}
+
+function addPatch(){
+  if(!window._patches) window._patches=[]
+  window._patches.push({op:'replace',path:'',value:''})
+  renderPatches()
+}
+
+function removePatch(i){
+  window._patches.splice(i,1)
+  renderPatches()
+}
+
+function updatePatch(i,field,value){
+  window._patches[i][field]=value
+}
+
+function renderPatches(){
+  let h=''
+  window._patches.forEach((p,i)=>{
+    h+=`<div class="cond-item" style="margin:2px 0">
+      <select onchange="updatePatch(${i},'op',this.value)" style="width:90px"><option value="replace"${p.op==='replace'?' selected':''}>replace</option><option value="add"${p.op==='add'?' selected':''}>add</option><option value="remove"${p.op==='remove'?' selected':''}>remove</option><option value="move"${p.op==='move'?' selected':''}>move</option><option value="copy"${p.op==='copy'?' selected':''}>copy</option><option value="test"${p.op==='test'?' selected':''}>test</option></select>
+      <input placeholder="path (e.g. /user/name)" value="${esc(p.path||'')}" onchange="updatePatch(${i},'path',this.value)" style="flex:1;font-family:monospace;font-size:12px">
+      ${p.op!=='remove'&&p.op!=='move'&&p.op!=='copy'?`<input placeholder="value" value="${esc(p.value||'')}" onchange="updatePatch(${i},'value',this.value)" style="width:100px;font-family:monospace;font-size:12px">`:''}
+      ${p.op==='move'||p.op==='copy'?`<input placeholder="from path" value="${esc(p.from||'')}" onchange="updatePatch(${i},'from',this.value)" style="width:120px;font-family:monospace;font-size:12px">`:''}
+      <span class="btn-sm danger" onclick="removePatch(${i})">×</span>
+    </div>`
+  })
+  if(!h) h='<div style="font-size:12px;color:var(--text2);padding:4px 0">No patches added</div>'
+  document.getElementById('patch-list').innerHTML=h
 }
 
 function confirmAction(){
@@ -389,6 +425,10 @@ function confirmAction(){
   let info=ACT_TYPES.find(x=>x.value===type)||{}
   let a={type}
   info.fields.forEach(f=>{
+    if(f==='patches'){
+      if(window._patches&&window._patches.length) a.patches=JSON.parse(JSON.stringify(window._patches))
+      return
+    }
     let el=document.getElementById('a-'+f)
     let v=el?el.value:''
     if(v){

@@ -154,8 +154,6 @@ Twist 使用 JSON 格式的规则配置文件。
 | `setMethod` | `value` | 修改 HTTP 方法 |
 | `setQueryParam` | `name`, `value` | 设置查询参数 |
 | `removeQueryParam` | `name` | 移除查询参数 |
-| `setCookie` | `name`, `value` | 设置 Cookie |
-| `removeCookie` | `name` | 移除 Cookie |
 | `setFormField` | `name`, `value` | 设置表单字段 |
 | `removeFormField` | `name` | 移除表单字段 |
 | `block` | `statusCode`, `headers`, `body`, `bodyEncoding` | 拦截并返回自定义响应（后续 action 不再执行） |
@@ -179,9 +177,20 @@ Twist 使用 JSON 格式的规则配置文件。
 | 类型 | 参数 | 说明 |
 |------|------|------|
 | `setStatus` | `value` (number) | 修改响应状态码 |
-| `setBody` | `value`, `encoding` | 替换响应体 |
-| `replaceBodyText` | `search`, `replace`, `replaceAll` | 字符串替换响应体 |
-| `patchBodyJson` | `patches` | JSON Patch 修改响应体（RFC 6902） |
+
+### 请求/响应通用
+
+以下行为在请求和响应阶段均可使用，会根据所在阶段自动处理请求体或响应体：
+
+| 类型 | 参数 | 说明 |
+|------|------|------|
+| `setHeader` | `name`, `value` | 设置请求头或响应头 |
+| `removeHeader` | `name` | 移除请求头或响应头 |
+| `setCookie` | `name`, `value` | 设置 Cookie（请求阶段修改 Cookie 头，响应阶段修改 Set-Cookie 头） |
+| `removeCookie` | `name` | 移除 Cookie |
+| `setBody` | `value`, `encoding` | 替换请求体或响应体 |
+| `replaceBodyText` | `search`, `replace`, `replaceAll` | 字符串替换请求体或响应体 |
+| `patchBodyJson` | `patches` | JSON Patch 修改请求体或响应体（RFC 6902） |
 
 **setBody 示例：**
 
@@ -201,20 +210,12 @@ Twist 使用 JSON 格式的规则配置文件。
 {
   "type": "patchBodyJson",
   "patches": [
-    {"op": "replace", "path": "/user/name", "value": "newName"},
-    {"op": "add", "path": "/user/age", "value": 25}
+    {"op": "replace", "path": "/user/name", "value": "newName"}
   ]
 }
 ```
 
 支持的 JSON Patch 操作：`add` / `remove` / `replace` / `move` / `copy` / `test`
-
-### 请求/响应通用
-
-| 类型 | 参数 | 说明 |
-|------|------|------|
-| `setHeader` | `name`, `value` | 设置请求头或响应头 |
-| `removeHeader` | `name` | 移除请求头或响应头 |
 
 ## 完整配置示例
 

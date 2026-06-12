@@ -628,88 +628,99 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			return
 
 		case "setBody":
-			if stage != "response" {
-				logger.Warn().Str("action", "setBody").Msg("setBody only valid in response stage")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
-			}
 			body := action.Body
 			if body == "" {
 				body = fmt.Sprintf("%v", action.Value)
 			}
-			logger.Debug().
-				Str("rule", rule.ID).
-				Int("bodyLen", len(body)).
-				Msg("set body")
-			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-			args.SetBody([]byte(body))
-			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("fulfill request failed")
+
+			if stage == "response" {
+				logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Msg("set response body")
+				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+				args.SetBody([]byte(body))
+				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+					logger.Error().Err(err).Msg("fulfill request failed")
+				}
+				return
 			}
+
+			logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Msg("set request body")
+			i.continueRequestPost(ctx, ev.RequestID, []byte(body))
 			return
 
 		case "replaceBodyText":
-			if stage != "response" {
-				logger.Warn().Str("action", "replaceBodyText").Msg("replaceBodyText only valid in response stage")
+			if stage == "response" {
+				body, err := i.getResponseBody(ctx, ev.RequestID)
+				if err != nil {
+					logger.Error().Err(err).Msg("failed to get response body")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				if action.ReplaceAll {
+					body = strings.ReplaceAll(body, action.Search, action.Replace)
+				} else {
+					body = strings.Replace(body, action.Search, action.Replace, 1)
+				}
+				logger.Debug().Str("rule", rule.ID).Str("search", action.Search).Msg("replace response body text")
+				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+				args.SetBody([]byte(body))
+				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+					logger.Error().Err(err).Msg("fulfill request failed")
+				}
+				return
+			}
+
+			postData, ok := getPostData(ev.Request)
+			if !ok {
+				logger.Warn().Msg("replaceBodyText: no request body")
 				i.continueEvent(ctx, ev.RequestID, stage, nil)
 				return
 			}
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("search", action.Search).
-				Msg("replace body text")
-
-			body, err := i.getResponseBody(ctx, ev.RequestID)
-			if err != nil {
-				logger.Error().Err(err).Msg("failed to get response body")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
-			}
-
-			replaceAll := action.ReplaceAll
-			if replaceAll {
+			body := string(postData)
+			if action.ReplaceAll {
 				body = strings.ReplaceAll(body, action.Search, action.Replace)
 			} else {
 				body = strings.Replace(body, action.Search, action.Replace, 1)
 			}
-
-			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-			args.SetBody([]byte(body))
-			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("fulfill request failed")
-			}
+			logger.Debug().Str("rule", rule.ID).Str("search", action.Search).Msg("replace request body text")
+			i.continueRequestPost(ctx, ev.RequestID, []byte(body))
 			return
 
 		case "patchBodyJson":
-			if stage != "response" {
-				logger.Warn().Str("action", "patchBodyJson").Msg("patchBodyJson only valid in response stage")
+			if stage == "response" {
+				body, err := i.getResponseBody(ctx, ev.RequestID)
+				if err != nil {
+					logger.Error().Err(err).Msg("failed to get response body")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				patched, err := applyJSONPatch(body, action.Patches)
+				if err != nil {
+					logger.Error().Err(err).Msg("json patch failed")
+					i.continueEvent(ctx, ev.RequestID, stage, nil)
+					return
+				}
+				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+				args.SetBody([]byte(patched))
+				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+					logger.Error().Err(err).Msg("fulfill request failed")
+				}
+				return
+			}
+
+			postData, ok := getPostData(ev.Request)
+			if !ok {
+				logger.Warn().Msg("patchBodyJson: no request body to patch")
 				i.continueEvent(ctx, ev.RequestID, stage, nil)
 				return
 			}
-			logger.Debug().
-				Str("rule", rule.ID).
-				Int("patches", len(action.Patches)).
-				Msg("patch body json")
-
-			body, err := i.getResponseBody(ctx, ev.RequestID)
+			patched, err := applyJSONPatch(string(postData), action.Patches)
 			if err != nil {
-				logger.Error().Err(err).Msg("failed to get response body")
+				logger.Error().Err(err).Msg("json patch failed on request body")
 				i.continueEvent(ctx, ev.RequestID, stage, nil)
 				return
 			}
-
-			patched, err := applyJSONPatch(body, action.Patches)
-			if err != nil {
-				logger.Error().Err(err).Msg("json patch failed")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
-			}
-
-			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-			args.SetBody([]byte(patched))
-			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("fulfill request failed")
-			}
+			logger.Debug().Str("rule", rule.ID).Int("patches", len(action.Patches)).Msg("patch request body json")
+			i.continueRequestPost(ctx, ev.RequestID, []byte(patched))
 			return
 
 		default:
