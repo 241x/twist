@@ -55,7 +55,10 @@ func (c *CDP) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to get browser version: %w", err)
 	}
 
-	conn, err := rpcc.DialContext(ctx, ver.WebSocketDebuggerURL)
+	conn, err := rpcc.DialContext(ctx, ver.WebSocketDebuggerURL,
+		rpcc.WithWriteBufferSize(32*1024*1024),
+		rpcc.WithCompression(),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to dial browser: %w", err)
 	}
@@ -196,7 +199,10 @@ func (c *CDP) AttachToTarget(ctx context.Context, targetID string) error {
 		return fmt.Errorf("target %q not found or has no WebSocket URL", targetID)
 	}
 
-	conn, err := rpcc.DialContext(ctx, wsURL)
+	conn, err := rpcc.DialContext(ctx, wsURL,
+		rpcc.WithWriteBufferSize(32*1024*1024),
+		rpcc.WithCompression(),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to dial target: %w", err)
 	}
