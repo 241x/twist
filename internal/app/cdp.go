@@ -156,6 +156,8 @@ func (c *CDP) EnableFetch(ctx context.Context) (fetch.RequestPausedClient, error
 	patterns := []fetch.RequestPattern{
 		{URLPattern: strPtr("http://*/*"), RequestStage: fetch.RequestStageRequest},
 		{URLPattern: strPtr("https://*/*"), RequestStage: fetch.RequestStageRequest},
+		{URLPattern: strPtr("http://*/*"), RequestStage: fetch.RequestStageResponse},
+		{URLPattern: strPtr("https://*/*"), RequestStage: fetch.RequestStageResponse},
 	}
 
 	enableArgs := fetch.NewEnableArgs().SetPatterns(patterns)

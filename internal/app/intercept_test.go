@@ -699,3 +699,261 @@ func TestRemoveQueryParamValue(t *testing.T) {
 		t.Errorf("page param lost: %s", result)
 	}
 }
+
+func TestModifyCookieHeader(t *testing.T) {
+	hdrs := map[string]string{
+		"Cookie": "sessionId=abc; theme=dark",
+	}
+
+	entries := modifyCookieHeader(hdrs, "theme", "light")
+	found := false
+	for _, e := range entries {
+		if e.Name == "Cookie" &&
+			strings.Contains(e.Value, "sessionId=abc") &&
+			strings.Contains(e.Value, "theme=light") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("cookie not modified: %+v", entries)
+	}
+}
+
+func TestRemoveCookieFromHeader(t *testing.T) {
+	hdrs := map[string]string{
+		"Cookie": "sessionId=abc; theme=dark; token=xyz",
+	}
+
+	entries := removeCookieFromHeader(hdrs, "theme")
+	found := false
+	for _, e := range entries {
+		if e.Name == "Cookie" {
+			if !strings.Contains(e.Value, "theme") && strings.Contains(e.Value, "sessionId") && strings.Contains(e.Value, "token") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("cookie not removed: %+v", entries)
+	}
+}
+
+func TestParseCookiePairs(t *testing.T) {
+	pairs := parseCookiePairs("a=1; b=2; c=3")
+	if pairs["a"] != "1" || pairs["b"] != "2" || pairs["c"] != "3" {
+		t.Errorf("pairs = %+v", pairs)
+	}
+}
+
+func TestBuildCookieString(t *testing.T) {
+	pairs := map[string]string{"a": "1", "b": "2"}
+	result := buildCookieString(pairs)
+	if !strings.Contains(result, "a=1") || !strings.Contains(result, "b=2") {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestBuildHeaderEntries(t *testing.T) {
+	hdrs := map[string]string{
+		"Content-Type": "application/json",
+		"Cookie":       "old=value",
+	}
+
+	entries := buildHeaderEntries(hdrs, "Cookie", "new=value")
+	var cookieEntry *fetch.HeaderEntry
+	for i := range entries {
+		if entries[i].Name == "Cookie" {
+			cookieEntry = &entries[i]
+		}
+	}
+	if cookieEntry == nil || cookieEntry.Value != "new=value" {
+		t.Errorf("cookie not replaced: %+v", entries)
+	}
+}
+
+func TestSetFormFieldValue(t *testing.T) {
+	body := []byte("name=old&age=10")
+	result := setFormFieldValue(body, "name", "new")
+	if !strings.Contains(string(result), "name=new") || !strings.Contains(string(result), "age=10") {
+		t.Errorf("result = %s", string(result))
+	}
+}
+
+func TestRemoveFormFieldValue(t *testing.T) {
+	body := []byte("name=test&debug=true&age=10")
+	result := removeFormFieldValue(body, "debug")
+	if strings.Contains(string(result), "debug") {
+		t.Errorf("debug not removed: %s", string(result))
+	}
+	if !strings.Contains(string(result), "name=test") || !strings.Contains(string(result), "age=10") {
+		t.Errorf("other fields lost: %s", string(result))
+	}
+}
+
+func TestBuildHeaderEntriesNoCookie(t *testing.T) {
+	hdrs := map[string]string{
+		"Content-Type": "application/json",
+	}
+
+	entries := buildHeaderEntries(hdrs, "Cookie", "newcookie=val")
+	found := false
+	for _, e := range entries {
+		if e.Name == "Cookie" && e.Value == "newcookie=val" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("new cookie not added: %+v", entries)
+	}
+}
+
+func TestJSONPatchAdd(t *testing.T) {
+	var doc any = map[string]any{"name": "old", "age": 10.0}
+
+	err := jsonPatchAdd(&doc, "/email", "test@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := doc.(map[string]any)
+	if m["email"] != "test@example.com" {
+		t.Errorf("email = %v", m["email"])
+	}
+}
+
+func TestJSONPatchReplace(t *testing.T) {
+	var doc any = map[string]any{"name": "old", "role": "user"}
+
+	err := jsonPatchReplace(&doc, "/name", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := doc.(map[string]any)
+	if m["name"] != "new" {
+		t.Errorf("name = %v", m["name"])
+	}
+}
+
+func TestJSONPatchRemove(t *testing.T) {
+	var doc any = map[string]any{"name": "test", "tmp": "delete-me"}
+
+	err := jsonPatchRemove(&doc, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := doc.(map[string]any)
+	if _, ok := m["tmp"]; ok {
+		t.Error("tmp should be removed")
+	}
+	if m["name"] != "test" {
+		t.Error("name should remain")
+	}
+}
+
+func TestJSONPatchMove(t *testing.T) {
+	var doc any = map[string]any{"old_name": "value"}
+
+	err := jsonPatchMove(&doc, "/old_name", "/new_name")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := doc.(map[string]any)
+	if _, ok := m["old_name"]; ok {
+		t.Error("old_name should be moved")
+	}
+	if m["new_name"] != "value" {
+		t.Errorf("new_name = %v", m["new_name"])
+	}
+}
+
+func TestJSONPatchCopy(t *testing.T) {
+	var doc any = map[string]any{"name": "original"}
+
+	err := jsonPatchCopy(&doc, "/name", "/display_name")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := doc.(map[string]any)
+	if m["name"] != "original" {
+		t.Error("name should remain")
+	}
+	if m["display_name"] != "original" {
+		t.Errorf("display_name = %v", m["display_name"])
+	}
+}
+
+func TestJSONPatchTest(t *testing.T) {
+	var doc any = map[string]any{"status": "active"}
+
+	err := jsonPatchTest(doc, "/status", "active")
+	if err != nil {
+		t.Errorf("test should pass: %v", err)
+	}
+
+	err = jsonPatchTest(doc, "/status", "inactive")
+	if err == nil {
+		t.Error("test should fail")
+	}
+}
+
+func TestPatchGet(t *testing.T) {
+	doc := map[string]any{
+		"user": map[string]any{
+			"name": "john",
+			"age":  25.0,
+		},
+	}
+
+	val, err := patchGet(doc, "/user/name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "john" {
+		t.Errorf("got %v", val)
+	}
+
+	val, err = patchGet(doc, "/user/age")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != 25.0 {
+		t.Errorf("got %v", val)
+	}
+
+	_, err = patchGet(doc, "/user/nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent path")
+	}
+}
+
+func TestContentLengthBypass(t *testing.T) {
+	i := &Intercept{cdp: &CDP{host: "127.0.0.1", port: 9222}}
+
+	ev := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:    "https://example.com/upload",
+			Method: "POST",
+			Headers: network.Headers(`{"Content-Length": "10485760"}`),
+		},
+	}
+
+	if !i.shouldBypass(context.Background(), ev) {
+		t.Error("10MB request should be bypassed")
+	}
+
+	ev2 := &fetch.RequestPausedReply{
+		Request: network.Request{
+			URL:    "https://example.com/normal",
+			Method: "POST",
+			Headers: network.Headers(`{"Content-Length": "1024"}`),
+		},
+	}
+
+	if i.shouldBypass(context.Background(), ev2) {
+		t.Error("1KB request should not be bypassed")
+	}
+}

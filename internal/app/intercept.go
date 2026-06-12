@@ -18,6 +18,10 @@ import (
 	"github.com/241x/twist/internal/log"
 )
 
+const maxBodySize = 5 * 1024 * 1024
+
+var regexCache sync.Map
+
 type Intercept struct {
 	cdp         *CDP
 	config      *Config
@@ -74,12 +78,18 @@ func (i *Intercept) Start(ctx context.Context) error {
 			return err
 		}
 
+		stage := "request"
+		if ev.ResponseStatusCode != nil {
+			stage = "response"
+		}
+
 		if i.shouldBypass(ctx, ev) {
 			logger.Debug().
 				Str("url", ev.Request.URL).
+				Str("stage", stage).
 				Str("reason", "bypass").
 				Msg("request bypassed")
-			i.continueRequest(ctx, ev.RequestID, nil)
+			i.continueEvent(ctx, ev.RequestID, stage, nil)
 			continue
 		}
 
@@ -110,20 +120,26 @@ func (i *Intercept) processEvent(ctx context.Context, ev *fetch.RequestPausedRep
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	stage := "request"
+	if ev.ResponseStatusCode != nil {
+		stage = "response"
+	}
+
 	logger := log.FromContext(ctx)
 
-	rule := i.matchRules(ev, "request")
+	rule := i.matchRules(ev, stage)
 	if rule == nil {
-		i.continueRequest(ctx, ev.RequestID, nil)
+		i.continueEvent(ctx, ev.RequestID, stage, nil)
 		return
 	}
 
 	logger.Debug().
 		Str("rule", rule.ID).
 		Str("url", ev.Request.URL).
+		Str("stage", stage).
 		Msg("rule matched")
 
-	i.executeActions(ctx, ev, rule)
+	i.executeActions(ctx, ev, rule, stage)
 }
 
 func (i *Intercept) shouldBypass(ctx context.Context, ev *fetch.RequestPausedReply) bool {
@@ -147,7 +163,25 @@ func (i *Intercept) shouldBypass(ctx context.Context, ev *fetch.RequestPausedRep
 		return true
 	}
 
+	hdrs := parseHeaders(ev.Request.Headers)
+	if cl := headerGet(hdrs, "Content-Length"); cl != "" {
+		if n, err := strconv.Atoi(cl); err == nil && n > maxBodySize {
+			return true
+		}
+	}
+
 	return false
+}
+
+func (i *Intercept) continueEvent(ctx context.Context, requestID fetch.RequestID, stage string, headers []fetch.HeaderEntry) {
+	if stage == "response" {
+		args := fetch.NewContinueResponseArgs(requestID)
+		if err := i.cdp.TargetClient().Fetch.ContinueResponse(ctx, args); err != nil {
+			log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue response failed")
+		}
+	} else {
+		i.continueRequest(ctx, requestID, headers)
+	}
 }
 
 func (i *Intercept) continueRequest(ctx context.Context, requestID fetch.RequestID, headers []fetch.HeaderEntry) {
@@ -167,6 +201,15 @@ func (i *Intercept) continueRequestURL(ctx context.Context, requestID fetch.Requ
 
 	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
 		log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue request with URL failed")
+	}
+}
+
+func (i *Intercept) continueRequestPost(ctx context.Context, requestID fetch.RequestID, postData []byte) {
+	args := fetch.NewContinueRequestArgs(requestID)
+	args.SetPostData(postData)
+
+	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
+		log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue request with post data failed")
 	}
 }
 
@@ -410,15 +453,23 @@ func matchRegex(pattern, s string) bool {
 	if pattern == "" {
 		return false
 	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return false
+
+	re, ok := regexCache.Load(pattern)
+	if !ok {
+		var err error
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return false
+		}
+		regexCache.Store(pattern, re)
 	}
-	return re.MatchString(s)
+
+	return re.(*regexp.Regexp).MatchString(s)
 }
 
-func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedReply, rule *Rule) {
+func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedReply, rule *Rule, stage string) {
 	logger := log.FromContext(ctx)
+	hdrs := parseHeaders(ev.Request.Headers)
 
 	for _, action := range rule.Actions {
 		switch action.Type {
@@ -517,35 +568,146 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			return
 
 		case "setCookie":
+			newHeaders := modifyCookieHeader(hdrs, action.Name, fmt.Sprintf("%v", action.Value))
 			logger.Debug().
 				Str("rule", rule.ID).
 				Str("cookie", action.Name).
 				Msg("set cookie")
-			i.continueRequest(ctx, ev.RequestID, nil)
+			i.continueRequest(ctx, ev.RequestID, newHeaders)
 			return
 
 		case "removeCookie":
+			newHeaders := removeCookieFromHeader(hdrs, action.Name)
 			logger.Debug().
 				Str("rule", rule.ID).
 				Str("cookie", action.Name).
 				Msg("remove cookie")
-			i.continueRequest(ctx, ev.RequestID, nil)
+			i.continueRequest(ctx, ev.RequestID, newHeaders)
 			return
 
 		case "setFormField":
+			body, ok := getPostData(ev.Request)
+			if ok {
+				body = setFormFieldValue(body, action.Name, fmt.Sprintf("%v", action.Value))
+			}
 			logger.Debug().
 				Str("rule", rule.ID).
 				Str("field", action.Name).
 				Msg("set form field")
-			i.continueRequest(ctx, ev.RequestID, nil)
+			i.continueRequestPost(ctx, ev.RequestID, body)
 			return
 
 		case "removeFormField":
+			body, ok := getPostData(ev.Request)
+			if ok {
+				body = removeFormFieldValue(body, action.Name)
+			}
 			logger.Debug().
 				Str("rule", rule.ID).
 				Str("field", action.Name).
 				Msg("remove form field")
-			i.continueRequest(ctx, ev.RequestID, nil)
+			i.continueRequestPost(ctx, ev.RequestID, body)
+			return
+
+		case "setStatus":
+			if stage != "response" {
+				logger.Warn().Str("action", "setStatus").Msg("setStatus only valid in response stage, passing through")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			args := fetch.NewFulfillRequestArgs(ev.RequestID, action.StatusCode)
+			logger.Debug().
+				Str("rule", rule.ID).
+				Int("status", action.StatusCode).
+				Msg("set status")
+			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+				logger.Error().Err(err).Msg("fulfill request failed")
+			}
+			return
+
+		case "setBody":
+			if stage != "response" {
+				logger.Warn().Str("action", "setBody").Msg("setBody only valid in response stage")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			body := action.Body
+			if body == "" {
+				body = fmt.Sprintf("%v", action.Value)
+			}
+			logger.Debug().
+				Str("rule", rule.ID).
+				Int("bodyLen", len(body)).
+				Msg("set body")
+			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+			args.SetBody([]byte(body))
+			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+				logger.Error().Err(err).Msg("fulfill request failed")
+			}
+			return
+
+		case "replaceBodyText":
+			if stage != "response" {
+				logger.Warn().Str("action", "replaceBodyText").Msg("replaceBodyText only valid in response stage")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			logger.Debug().
+				Str("rule", rule.ID).
+				Str("search", action.Search).
+				Msg("replace body text")
+
+			body, err := i.getResponseBody(ctx, ev.RequestID)
+			if err != nil {
+				logger.Error().Err(err).Msg("failed to get response body")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+
+			replaceAll := action.ReplaceAll
+			if replaceAll {
+				body = strings.ReplaceAll(body, action.Search, action.Replace)
+			} else {
+				body = strings.Replace(body, action.Search, action.Replace, 1)
+			}
+
+			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+			args.SetBody([]byte(body))
+			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+				logger.Error().Err(err).Msg("fulfill request failed")
+			}
+			return
+
+		case "patchBodyJson":
+			if stage != "response" {
+				logger.Warn().Str("action", "patchBodyJson").Msg("patchBodyJson only valid in response stage")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			logger.Debug().
+				Str("rule", rule.ID).
+				Int("patches", len(action.Patches)).
+				Msg("patch body json")
+
+			body, err := i.getResponseBody(ctx, ev.RequestID)
+			if err != nil {
+				logger.Error().Err(err).Msg("failed to get response body")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+
+			patched, err := applyJSONPatch(body, action.Patches)
+			if err != nil {
+				logger.Error().Err(err).Msg("json patch failed")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+
+			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+			args.SetBody([]byte(patched))
+			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+				logger.Error().Err(err).Msg("fulfill request failed")
+			}
 			return
 
 		default:
@@ -590,4 +752,336 @@ func removeQueryParamValue(rawURL, name string) string {
 	q.Del(name)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func modifyCookieHeader(headers map[string]string, name, value string) []fetch.HeaderEntry {
+	cookieVal := headerGet(headers, "Cookie")
+	pairs := parseCookiePairs(cookieVal)
+	pairs[name] = value
+
+	newCookie := buildCookieString(pairs)
+	entries := buildHeaderEntries(headers, "Cookie", newCookie)
+	return entries
+}
+
+func removeCookieFromHeader(headers map[string]string, name string) []fetch.HeaderEntry {
+	cookieVal := headerGet(headers, "Cookie")
+	pairs := parseCookiePairs(cookieVal)
+	delete(pairs, name)
+
+	newCookie := buildCookieString(pairs)
+	entries := buildHeaderEntries(headers, "Cookie", newCookie)
+	return entries
+}
+
+func parseCookiePairs(cookieStr string) map[string]string {
+	pairs := make(map[string]string)
+	for _, part := range strings.Split(cookieStr, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(part, "=")
+		pairs[k] = v
+	}
+	return pairs
+}
+
+func buildCookieString(pairs map[string]string) string {
+	parts := make([]string, 0, len(pairs))
+	for k, v := range pairs {
+		parts = append(parts, k+"="+v)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func buildHeaderEntries(headers map[string]string, skipKey, newValue string) []fetch.HeaderEntry {
+	entries := make([]fetch.HeaderEntry, 0, len(headers)+1)
+	cookieReplaced := false
+	for k, v := range headers {
+		if strings.EqualFold(k, skipKey) {
+			if newValue != "" {
+				entries = append(entries, fetch.HeaderEntry{Name: k, Value: newValue})
+				cookieReplaced = true
+			}
+			continue
+		}
+		if v != "" {
+			entries = append(entries, fetch.HeaderEntry{Name: k, Value: v})
+		}
+	}
+	if !cookieReplaced && newValue != "" {
+		entries = append(entries, fetch.HeaderEntry{Name: "Cookie", Value: newValue})
+	}
+	return entries
+}
+
+func getPostData(req network.Request) ([]byte, bool) {
+	if req.PostData != nil && *req.PostData != "" {
+		return []byte(*req.PostData), true
+	}
+	return nil, false
+}
+
+func setFormFieldValue(body []byte, name, value string) []byte {
+	vals, err := url.ParseQuery(string(body))
+	if err != nil {
+		return body
+	}
+	vals.Set(name, value)
+	return []byte(vals.Encode())
+}
+
+func removeFormFieldValue(body []byte, name string) []byte {
+	vals, err := url.ParseQuery(string(body))
+	if err != nil {
+		return body
+	}
+	vals.Del(name)
+	return []byte(vals.Encode())
+}
+
+func (i *Intercept) getResponseBody(ctx context.Context, requestID fetch.RequestID) (string, error) {
+	reply, err := i.cdp.TargetClient().Fetch.GetResponseBody(ctx, fetch.NewGetResponseBodyArgs(requestID))
+	if err != nil {
+		return "", err
+	}
+	return reply.Body, nil
+}
+
+func applyJSONPatch(body string, patches []JSONPatch) (string, error) {
+	var doc any
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return "", fmt.Errorf("failed to parse JSON body: %w", err)
+	}
+
+	for _, p := range patches {
+		switch p.Op {
+		case "add":
+			if err := jsonPatchAdd(&doc, p.Path, p.Value); err != nil {
+				return "", err
+			}
+		case "remove":
+			if err := jsonPatchRemove(&doc, p.Path); err != nil {
+				return "", err
+			}
+		case "replace":
+			if err := jsonPatchReplace(&doc, p.Path, p.Value); err != nil {
+				return "", err
+			}
+		case "move":
+			if err := jsonPatchMove(&doc, p.From, p.Path); err != nil {
+				return "", err
+			}
+		case "copy":
+			if err := jsonPatchCopy(&doc, p.From, p.Path); err != nil {
+				return "", err
+			}
+		case "test":
+			if err := jsonPatchTest(doc, p.Path, p.Value); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("unknown patch op: %q", p.Op)
+		}
+	}
+
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func jsonPatchAdd(doc *any, path string, value any) error {
+	if path == "/" {
+		*doc = value
+		return nil
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
+	lastKey := parts[len(parts)-1]
+
+	parent, err := patchGet(*doc, parentPath)
+	if err != nil {
+		return err
+	}
+
+	switch p := parent.(type) {
+	case map[string]any:
+		p[lastKey] = value
+	case []any:
+		idx, err := strconv.Atoi(lastKey)
+		if err != nil {
+			return fmt.Errorf("invalid array index: %q", lastKey)
+		}
+		if idx < 0 || idx > len(p) {
+			result := append(p, value)
+			if err := patchSetAt(doc, parentPath, result); err != nil {
+				return err
+			}
+		} else {
+			result := append(p[:idx], append([]any{value}, p[idx:]...)...)
+			if err := patchSetAt(doc, parentPath, result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func jsonPatchRemove(doc *any, path string) error {
+	if path == "/" {
+		*doc = nil
+		return nil
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
+	lastKey := parts[len(parts)-1]
+
+	parent, err := patchGet(*doc, parentPath)
+	if err != nil {
+		return err
+	}
+
+	switch p := parent.(type) {
+	case map[string]any:
+		delete(p, lastKey)
+	case []any:
+		idx, err := strconv.Atoi(lastKey)
+		if err != nil {
+			return fmt.Errorf("invalid array index: %q", lastKey)
+		}
+		if idx >= 0 && idx < len(p) {
+			result := append(p[:idx], p[idx+1:]...)
+			if err := patchSetAt(doc, parentPath, result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func jsonPatchReplace(doc *any, path string, value any) error {
+	if path == "/" {
+		*doc = value
+		return nil
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
+	lastKey := parts[len(parts)-1]
+
+	parent, err := patchGet(*doc, parentPath)
+	if err != nil {
+		return err
+	}
+
+	switch p := parent.(type) {
+	case map[string]any:
+		p[lastKey] = value
+	case []any:
+		idx, err := strconv.Atoi(lastKey)
+		if err != nil {
+			return fmt.Errorf("invalid array index: %q", lastKey)
+		}
+		if idx >= 0 && idx < len(p) {
+			p[idx] = value
+		}
+	}
+	return nil
+}
+
+func jsonPatchMove(doc *any, from, path string) error {
+	fromVal, err := patchGet(*doc, from)
+	if err != nil {
+		return err
+	}
+	if err := jsonPatchRemove(doc, from); err != nil {
+		return err
+	}
+	return jsonPatchAdd(doc, path, fromVal)
+}
+
+func jsonPatchCopy(doc *any, from, path string) error {
+	fromVal, err := patchGet(*doc, from)
+	if err != nil {
+		return err
+	}
+	return jsonPatchAdd(doc, path, fromVal)
+}
+
+func jsonPatchTest(doc any, path string, value any) error {
+	val, err := patchGet(doc, path)
+	if err != nil {
+		return err
+	}
+	valJSON, _ := json.Marshal(val)
+	expJSON, _ := json.Marshal(value)
+	if string(valJSON) != string(expJSON) {
+		return fmt.Errorf("test failed: %s != %s", valJSON, expJSON)
+	}
+	return nil
+}
+
+func patchGet(doc any, path string) (any, error) {
+	if path == "" || path == "/" {
+		return doc, nil
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	current := doc
+
+	for _, part := range parts {
+		switch v := current.(type) {
+		case map[string]any:
+			next, ok := v[part]
+			if !ok {
+				return nil, fmt.Errorf("path %q not found", part)
+			}
+			current = next
+		case []any:
+			idx, err := strconv.Atoi(part)
+			if err != nil || idx < 0 || idx >= len(v) {
+				return nil, fmt.Errorf("array index %q out of range", part)
+			}
+			current = v[idx]
+		default:
+			return nil, fmt.Errorf("cannot navigate into %T", current)
+		}
+	}
+
+	return current, nil
+}
+
+func patchSetAt(doc *any, path string, value any) error {
+	if path == "/" {
+		*doc = value
+		return nil
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
+	lastKey := parts[len(parts)-1]
+
+	parent, err := patchGet(*doc, parentPath)
+	if err != nil {
+		return err
+	}
+
+	switch p := parent.(type) {
+	case map[string]any:
+		p[lastKey] = value
+	case []any:
+		idx, err := strconv.Atoi(lastKey)
+		if err != nil {
+			return fmt.Errorf("invalid array index: %q", lastKey)
+		}
+		if idx >= 0 && idx < len(p) {
+			p[idx] = value
+		}
+	}
+	return nil
 }
