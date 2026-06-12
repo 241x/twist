@@ -3,7 +3,7 @@
 ## 架构设计
 
 ```
-cmd/twist/main.go          → 入口，退出码处理
+main.go                    → 入口，退出码处理
 internal/cmd/               → Cobra 命令、参数解析、配置加载
 internal/app/               → 业务逻辑层
   app.go                    → 编排器，串联完整流程

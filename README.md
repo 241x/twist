@@ -7,7 +7,7 @@
 ## Quick Start
 
 ```bash
-go install github.com/241x/twist/cmd/twist@latest
+go install github.com/241x/twist@latest
 
 # Launch Chrome and intercept with rules
 twist --launch -c rules.json -u https://example.com

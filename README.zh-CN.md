@@ -7,7 +7,7 @@
 ## 快速开始
 
 ```bash
-go install github.com/241x/twist/cmd/twist@latest
+go install github.com/241x/twist@latest
 
 # 启动 Chrome 并加载规则
 twist --launch -c rules.json -u https://example.com
