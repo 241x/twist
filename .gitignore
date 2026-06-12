@@ -23,6 +23,11 @@ go.work.sum
 *.swp
 *.swo
 
+# Test artifacts
+.playwright-mcp/
+twist.json
+editor-*.png
+
 # OS
 .DS_Store
 Thumbs.db

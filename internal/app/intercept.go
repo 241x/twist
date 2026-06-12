@@ -15,9 +15,17 @@ import (
 
 	"github.com/mafredri/cdp/protocol/fetch"
 	"github.com/mafredri/cdp/protocol/network"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/241x/twist/internal/log"
 )
+
+var _ struct {
+	json.Number
+	gjson.Result
+	sjson.Options
+}
 
 const maxBodySize = 5 * 1024 * 1024
 
@@ -860,18 +868,11 @@ func matchBody(cond Condition, body string) bool {
 }
 
 func matchBodyJsonPath(body, path, expected string) bool {
-	var doc any
-	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+	result := gjson.Get(body, toGJSONPath(path))
+	if !result.Exists() {
 		return false
 	}
-
-	val, err := patchGet(doc, path)
-	if err != nil {
-		return false
-	}
-
-	valStr := fmt.Sprintf("%v", val)
-	return valStr == expected
+	return fmt.Sprintf("%v", result.Value()) == expected
 }
 
 func setFormFieldValue(body []byte, name, value string) []byte {
@@ -908,238 +909,57 @@ func (i *Intercept) getResponseBody(ctx context.Context, requestID fetch.Request
 }
 
 func applyJSONPatch(body string, patches []JSONPatch) (string, error) {
-	var doc any
-	if err := json.Unmarshal([]byte(body), &doc); err != nil {
-		return "", fmt.Errorf("failed to parse JSON body: %w", err)
-	}
+	var err error
+	result := body
 
 	for _, p := range patches {
+		path := toGJSONPath(p.Path)
+		from := toGJSONPath(p.From)
+
 		switch p.Op {
-		case "add":
-			if err := jsonPatchAdd(&doc, p.Path, p.Value); err != nil {
-				return "", err
-			}
+		case "add", "replace":
+			result, err = sjson.Set(result, path, p.Value)
 		case "remove":
-			if err := jsonPatchRemove(&doc, p.Path); err != nil {
-				return "", err
-			}
-		case "replace":
-			if err := jsonPatchReplace(&doc, p.Path, p.Value); err != nil {
-				return "", err
-			}
+			result, err = sjson.Delete(result, path)
 		case "move":
-			if err := jsonPatchMove(&doc, p.From, p.Path); err != nil {
-				return "", err
+			val := gjson.Get(result, from)
+			if !val.Exists() {
+				err = fmt.Errorf("move: source path %q not found", p.From)
+				break
 			}
+			result, err = sjson.Delete(result, from)
+			if err != nil {
+				break
+			}
+			result, err = sjson.Set(result, path, val.Value())
 		case "copy":
-			if err := jsonPatchCopy(&doc, p.From, p.Path); err != nil {
-				return "", err
+			val := gjson.Get(result, from)
+			if !val.Exists() {
+				err = fmt.Errorf("copy: source path %q not found", p.From)
+				break
 			}
+			result, err = sjson.Set(result, path, val.Value())
 		case "test":
-			if err := jsonPatchTest(doc, p.Path, p.Value); err != nil {
-				return "", err
+			val := gjson.Get(result, path)
+			if !val.Exists() {
+				err = fmt.Errorf("test: path %q not found", p.Path)
+				break
+			}
+			if fmt.Sprintf("%v", val.Value()) != fmt.Sprintf("%v", p.Value) {
+				err = fmt.Errorf("test failed: %v != %v", val.Value(), p.Value)
 			}
 		default:
-			return "", fmt.Errorf("unknown patch op: %q", p.Op)
+			err = fmt.Errorf("unknown patch op: %q", p.Op)
 		}
-	}
-
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-func jsonPatchAdd(doc *any, path string, value any) error {
-	if path == "/" {
-		*doc = value
-		return nil
-	}
-
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
-	lastKey := parts[len(parts)-1]
-
-	parent, err := patchGet(*doc, parentPath)
-	if err != nil {
-		return err
-	}
-
-	switch p := parent.(type) {
-	case map[string]any:
-		p[lastKey] = value
-	case []any:
-		idx, err := strconv.Atoi(lastKey)
 		if err != nil {
-			return fmt.Errorf("invalid array index: %q", lastKey)
-		}
-		if idx < 0 || idx > len(p) {
-			result := append(p, value)
-			if err := patchSetAt(doc, parentPath, result); err != nil {
-				return err
-			}
-		} else {
-			result := append(p[:idx], append([]any{value}, p[idx:]...)...)
-			if err := patchSetAt(doc, parentPath, result); err != nil {
-				return err
-			}
+			return "", err
 		}
 	}
-	return nil
+
+	return result, nil
 }
 
-func jsonPatchRemove(doc *any, path string) error {
-	if path == "/" {
-		*doc = nil
-		return nil
-	}
-
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
-	lastKey := parts[len(parts)-1]
-
-	parent, err := patchGet(*doc, parentPath)
-	if err != nil {
-		return err
-	}
-
-	switch p := parent.(type) {
-	case map[string]any:
-		delete(p, lastKey)
-	case []any:
-		idx, err := strconv.Atoi(lastKey)
-		if err != nil {
-			return fmt.Errorf("invalid array index: %q", lastKey)
-		}
-		if idx >= 0 && idx < len(p) {
-			result := append(p[:idx], p[idx+1:]...)
-			if err := patchSetAt(doc, parentPath, result); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func jsonPatchReplace(doc *any, path string, value any) error {
-	if path == "/" {
-		*doc = value
-		return nil
-	}
-
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
-	lastKey := parts[len(parts)-1]
-
-	parent, err := patchGet(*doc, parentPath)
-	if err != nil {
-		return err
-	}
-
-	switch p := parent.(type) {
-	case map[string]any:
-		p[lastKey] = value
-	case []any:
-		idx, err := strconv.Atoi(lastKey)
-		if err != nil {
-			return fmt.Errorf("invalid array index: %q", lastKey)
-		}
-		if idx >= 0 && idx < len(p) {
-			p[idx] = value
-		}
-	}
-	return nil
-}
-
-func jsonPatchMove(doc *any, from, path string) error {
-	fromVal, err := patchGet(*doc, from)
-	if err != nil {
-		return err
-	}
-	if err := jsonPatchRemove(doc, from); err != nil {
-		return err
-	}
-	return jsonPatchAdd(doc, path, fromVal)
-}
-
-func jsonPatchCopy(doc *any, from, path string) error {
-	fromVal, err := patchGet(*doc, from)
-	if err != nil {
-		return err
-	}
-	return jsonPatchAdd(doc, path, fromVal)
-}
-
-func jsonPatchTest(doc any, path string, value any) error {
-	val, err := patchGet(doc, path)
-	if err != nil {
-		return err
-	}
-	valJSON, _ := json.Marshal(val)
-	expJSON, _ := json.Marshal(value)
-	if string(valJSON) != string(expJSON) {
-		return fmt.Errorf("test failed: %s != %s", valJSON, expJSON)
-	}
-	return nil
-}
-
-func patchGet(doc any, path string) (any, error) {
-	if path == "" || path == "/" {
-		return doc, nil
-	}
-
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	current := doc
-
-	for _, part := range parts {
-		switch v := current.(type) {
-		case map[string]any:
-			next, ok := v[part]
-			if !ok {
-				return nil, fmt.Errorf("path %q not found", part)
-			}
-			current = next
-		case []any:
-			idx, err := strconv.Atoi(part)
-			if err != nil || idx < 0 || idx >= len(v) {
-				return nil, fmt.Errorf("array index %q out of range", part)
-			}
-			current = v[idx]
-		default:
-			return nil, fmt.Errorf("cannot navigate into %T", current)
-		}
-	}
-
-	return current, nil
-}
-
-func patchSetAt(doc *any, path string, value any) error {
-	if path == "/" {
-		*doc = value
-		return nil
-	}
-
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
-	lastKey := parts[len(parts)-1]
-
-	parent, err := patchGet(*doc, parentPath)
-	if err != nil {
-		return err
-	}
-
-	switch p := parent.(type) {
-	case map[string]any:
-		p[lastKey] = value
-	case []any:
-		idx, err := strconv.Atoi(lastKey)
-		if err != nil {
-			return fmt.Errorf("invalid array index: %q", lastKey)
-		}
-		if idx >= 0 && idx < len(p) {
-			p[idx] = value
-		}
-	}
-	return nil
+func toGJSONPath(path string) string {
+	p := strings.TrimPrefix(path, "/")
+	return strings.ReplaceAll(p, "/", ".")
 }
