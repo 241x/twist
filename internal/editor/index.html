@@ -434,7 +434,9 @@ function confirmAction(){
     let v=el?el.value:''
     if(v){
       if(f==='statusCode') a.statusCode=parseInt(v)||200
-      else if(info.bodyField===f) a.body=v
+      else if(f==='patches'){
+        if(window._patches&&window._patches.length) a.patches=JSON.parse(JSON.stringify(window._patches))
+      }
       else a[f]=v
     }
   })

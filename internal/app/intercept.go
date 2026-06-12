@@ -727,10 +727,7 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			return
 
 		case "appendBody":
-			appendContent := action.Body
-			if appendContent == "" {
-				appendContent = fmt.Sprintf("%v", action.Value)
-			}
+			appendContent := fmt.Sprintf("%v", action.Value)
 
 			if stage == "response" {
 				body, err := i.getResponseBody(ctx, ev.RequestID)
