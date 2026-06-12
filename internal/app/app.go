@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"text/tabwriter"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/241x/twist/internal/log"
 )
@@ -159,14 +160,54 @@ func (a *App) runIntercept(ctx context.Context) error {
 }
 
 func printTargets(targets []CDPTarget) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTYPE\tURL\tTITLE")
+	idW := 34
+	titleW := 30
+	fmt.Printf("%s  %s  %s\n", padRight("ID", idW), padRight("TITLE", titleW), "URL")
 	for _, t := range targets {
-		u := t.URL
-		if len(u) > 80 {
-			u = u[:77] + "..."
+		if t.Type != "page" {
+			continue
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.ID, t.Type, u, t.Title)
+		id := truncate(t.ID, idW)
+		title := truncate(t.Title, titleW)
+		url := t.URL
+		if displayWidth(url) > 80 {
+			url = truncate(url, 77) + "..."
+		}
+		fmt.Printf("%s  %s  %s\n", padRight(id, idW), padRight(title, titleW), url)
 	}
-	w.Flush()
+}
+
+func padRight(s string, width int) string {
+	w := displayWidth(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+func truncate(s string, width int) string {
+	w := 0
+	for i, r := range s {
+		if utf8.RuneLen(r) > 2 {
+			w += 2
+		} else {
+			w++
+		}
+		if w > width {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if utf8.RuneLen(r) > 2 {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
 }

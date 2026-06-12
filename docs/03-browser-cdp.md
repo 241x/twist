@@ -132,7 +132,7 @@ twist 使用单接收 + 多 Worker 架构处理高并发：
 `--list-targets` 输出对齐表格：
 
 ```
-ID                             TYPE  URL                       TITLE
-A1B2C3D4E5F6...                page  https://example.com        Example Page
-B2C3D4E5F6A1...                page  about:blank               New Tab
+ID                             TITLE                URL
+A1B2C3D4E5F6...                Example Page         https://example.com
+B2C3D4E5F6A1...                New Tab              about:blank
 ```
