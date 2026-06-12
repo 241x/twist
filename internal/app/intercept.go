@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -846,7 +847,14 @@ func (i *Intercept) getResponseBody(ctx context.Context, requestID fetch.Request
 	if err != nil {
 		return "", err
 	}
-	return reply.Body, nil
+	body := reply.Body
+	if reply.Base64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(body)
+		if err == nil {
+			body = string(decoded)
+		}
+	}
+	return body, nil
 }
 
 func applyJSONPatch(body string, patches []JSONPatch) (string, error) {
