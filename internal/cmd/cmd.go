@@ -44,7 +44,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&listTargets, "list-targets", false, "List all available browser tab targets")
 	rootCmd.PersistentFlags().StringVarP(&target, "target", "t", "", "Attach to a specific tab target by ID")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging output")
-	rootCmd.PersistentFlags().IntVar(&timeout, "timeout", 30, "CDP connection timeout in seconds")
+	rootCmd.PersistentFlags().IntVar(&timeout, "timeout", 15, "CDP connection timeout in seconds")
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {

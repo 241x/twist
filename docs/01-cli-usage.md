@@ -20,7 +20,7 @@ twist [参数]
 | `--target` | `-t` | string | — | 附加到指定标签页 ID |
 | `--list-targets` | — | bool | `false` | 列出可用标签页后退出 |
 | `--verbose` | `-v` | bool | `false` | 输出详细调试日志 |
-| `--timeout` | — | int | `30` | CDP 连接超时（秒） |
+| `--timeout` | — | int | `15` | CDP 连接超时（秒） |
 
 ## 退出码
 

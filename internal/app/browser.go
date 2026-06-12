@@ -77,6 +77,7 @@ func buildCommand(ctx context.Context, execPath string, port int, args []string,
 		fmt.Sprintf("--remote-debugging-port=%d", port),
 		"--no-first-run",
 		"--no-default-browser-check",
+		"--start-maximized",
 	}
 
 	tmpDir, _ := os.MkdirTemp("", "twist-browser-*")
