@@ -715,7 +715,7 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 				}
 			}
 
-			logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Msg("set request body")
+			logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Str("setBody", body).Msg("set request body")
 			args := fetch.NewContinueRequestArgs(ev.RequestID)
 			args.SetPostData([]byte(body))
 			if len(headers) > 0 {
@@ -792,13 +792,15 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 				i.continueEvent(ctx, ev.RequestID, stage, nil)
 				return
 			}
-			patched, err := applyJSONPatch(string(postData), action.Patches)
+			origBody := string(postData)
+			logger.Debug().Str("rule", rule.ID).Int("origLen", len(origBody)).Str("origBody", origBody).Msg("patchBodyJson before")
+			patched, err := applyJSONPatch(origBody, action.Patches)
 			if err != nil {
 				logger.Error().Err(err).Msg("json patch failed on request body")
 				i.continueEvent(ctx, ev.RequestID, stage, nil)
 				return
 			}
-			logger.Debug().Str("rule", rule.ID).Int("patches", len(action.Patches)).Msg("patch request body json")
+			logger.Debug().Str("rule", rule.ID).Int("patchedLen", len(patched)).Str("patchedBody", patched).Msg("patchBodyJson after")
 			i.continueRequestPost(ctx, ev.RequestID, []byte(patched))
 			return
 
@@ -919,9 +921,14 @@ func getPostData(req network.Request) ([]byte, bool) {
 func getPostDataStr(req network.Request) string {
 	if req.HasPostData != nil && *req.HasPostData && len(req.PostDataEntries) > 0 {
 		var parts []string
-		for _, e := range req.PostDataEntries {
-			if e.Bytes != nil {
-				parts = append(parts, *e.Bytes)
+		for _, entry := range req.PostDataEntries {
+			if entry.Bytes != nil {
+				raw := *entry.Bytes
+				if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil {
+					parts = append(parts, string(decoded))
+				} else {
+					parts = append(parts, raw)
+				}
 			}
 		}
 		return strings.Join(parts, "")
