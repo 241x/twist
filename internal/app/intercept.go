@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/mafredri/cdp/protocol/fetch"
 	"github.com/mafredri/cdp/protocol/network"
 	"github.com/tidwall/gjson"
@@ -832,6 +833,39 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			}
 			logger.Debug().Str("rule", rule.ID).Int("patchedLen", len(patched)).Str("patchedBody", patched).Msg("patchBodyJson after")
 			i.continueRequestPost(ctx, ev.RequestID, []byte(patched))
+			return
+
+		case "replaceElement":
+			if stage != "response" {
+				logger.Warn().Str("action", "replaceElement").Msg("replaceElement only valid in response stage")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			body, err := i.getResponseBody(ctx, ev.RequestID)
+			if err != nil {
+				logger.Warn().Err(err).Str("selector", action.Selector).Msg("replaceElement: body not available, passing through")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+			if err != nil {
+				logger.Error().Err(err).Msg("failed to parse HTML for replaceElement")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			doc.Find(action.Selector).SetHtml(fmt.Sprintf("%v", action.Value))
+			newBody, err := doc.Html()
+			if err != nil {
+				logger.Error().Err(err).Msg("failed to serialize HTML after replaceElement")
+				i.continueEvent(ctx, ev.RequestID, stage, nil)
+				return
+			}
+			logger.Debug().Str("rule", rule.ID).Str("selector", action.Selector).Msg("replace element")
+			args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
+			args.SetBody([]byte(newBody))
+			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+				logger.Error().Err(err).Msg("fulfill request failed")
+			}
 			return
 
 		default:

@@ -192,6 +192,7 @@ Twist 使用 JSON 格式的规则配置文件。
 | `appendBody` | `value` | 向请求体或响应体末尾追加内容 |
 | `replaceBodyText` | `search`, `replace`, `replaceAll` | 字符串替换请求体或响应体 |
 | `patchBodyJson` | `patches` | JSON Patch 修改请求体或响应体（RFC 6902） |
+| `replaceElement` | `selector`, `value` | jQuery 选择器定位 HTML 元素并替换内容（仅响应阶段） |
 
 **setBody 示例：**
 

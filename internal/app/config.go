@@ -116,6 +116,7 @@ type Action struct {
 	BodyEncoding string            `json:"bodyEncoding,omitempty"`
 	Encoding     string            `json:"encoding,omitempty"`
 	Patches      []JSONPatch       `json:"patches,omitempty"`
+	Selector     string            `json:"selector,omitempty"`
 }
 
 type JSONPatch struct {
@@ -193,6 +194,13 @@ func validateAction(a Action) error {
 	case "patchBodyJson":
 		if len(a.Patches) == 0 {
 			return fmt.Errorf("action %q requires field 'patches'", a.Type)
+		}
+	case "replaceElement":
+		if a.Selector == "" {
+			return fmt.Errorf("action %q requires field 'selector'", a.Type)
+		}
+		if a.Value == nil {
+			return fmt.Errorf("action %q requires field 'value'", a.Type)
 		}
 	default:
 		return fmt.Errorf("unknown action type: %q", a.Type)
