@@ -1,3 +1,4 @@
+// Package cmd 提供 twist CLI 的命令定义、参数解析和配置加载。
 package cmd
 
 import (

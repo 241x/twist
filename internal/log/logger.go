@@ -1,3 +1,4 @@
+// Package log 提供基于 zerolog 的结构化日志封装，支持 verbose 级别和 context 传递。
 package log
 
 import (

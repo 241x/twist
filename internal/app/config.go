@@ -6,6 +6,7 @@ import (
 	"os"
 )
 
+// Config 规则配置文件根对象。
 type Config struct {
 	ID          string                 `json:"id"`
 	Name        string                 `json:"name"`
@@ -15,6 +16,7 @@ type Config struct {
 	Rules       []Rule                 `json:"rules"`
 }
 
+// Rule 单条拦截规则，包含匹配条件和执行行为。
 type Rule struct {
 	ID       string  `json:"id"`
 	Name     string  `json:"name"`
@@ -30,6 +32,7 @@ type Match struct {
 	AnyOf []Condition `json:"anyOf,omitempty"`
 }
 
+// Condition 匹配条件，支持 25 种类型（URL/方法/Header/Query/Cookie/Body）。
 type Condition struct {
 	Type    string   `json:"type"`
 	Name    string   `json:"name,omitempty"`
@@ -103,6 +106,7 @@ func validateCondition(c Condition) error {
 	return nil
 }
 
+// Action 执行行为，支持 18 种类型（请求/响应/通用）。
 type Action struct {
 	Type         string            `json:"type"`
 	Name         string            `json:"name,omitempty"`
@@ -208,6 +212,7 @@ func validateAction(a Action) error {
 	return nil
 }
 
+// LoadConfig 加载规则配置，支持文件路径和 []byte 数据两种来源。
 func LoadConfig(configFile string, configData []byte) (*Config, error) {
 	data, err := resolveConfigData(configFile, configData)
 	if err != nil {

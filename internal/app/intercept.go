@@ -33,6 +33,7 @@ const maxResponseBodySize = 10 * 1024 * 1024
 
 var regexCache sync.Map
 
+// Intercept 拦截引擎：Fetch 域事件循环、worker 池、规则匹配和 action 执行。
 type Intercept struct {
 	cdp         *CDP
 	config      *Config
@@ -52,6 +53,7 @@ func NewIntercept(cdp *CDP, config *Config) *Intercept {
 	}
 }
 
+// Start 启动拦截循环：开启 Network + Fetch 域，进入事件接收。
 func (i *Intercept) Start(ctx context.Context) error {
 	if err := i.cdp.EnableNetwork(ctx); err != nil {
 		return err
@@ -153,6 +155,7 @@ func (i *Intercept) processEvent(ctx context.Context, ev *fetch.RequestPausedRep
 	i.executeActions(ctx, ev, rule, stage)
 }
 
+// shouldBypass 前置过滤：非 HTTP/WebSocket/OPTIONS/CDP自请求/大请求体直接放行。
 func (i *Intercept) shouldBypass(ctx context.Context, ev *fetch.RequestPausedReply) bool {
 	u := ev.Request.URL
 
@@ -232,6 +235,7 @@ func (i *Intercept) continueRequestPost(ctx context.Context, requestID fetch.Req
 	}
 }
 
+// matchRules 按 priority 降序匹配规则，返回第一条命中的规则。
 func (i *Intercept) matchRules(ev *fetch.RequestPausedReply, stage string) *Rule {
 	rules := i.config.Rules
 	if len(rules) == 0 {
@@ -487,6 +491,7 @@ func matchRegex(pattern, s string) bool {
 	return re.(*regexp.Regexp).MatchString(s)
 }
 
+// executeActions 根据 stage 执行匹配规则的所有 action。
 func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedReply, rule *Rule, stage string) {
 	logger := log.FromContext(ctx)
 	hdrs := parseHeaders(ev.Request.Headers)
@@ -1109,6 +1114,7 @@ func modifyMultipart(body []byte, boundary, fieldName string, fn func([]string) 
 	return []byte(strings.Join(result, "\r\n")), nil
 }
 
+// getResponseBody 获取响应体，自动处理 base64 编码和大小限制。
 func (i *Intercept) getResponseBody(ctx context.Context, requestID fetch.RequestID) (string, error) {
 	reply, err := i.cdp.TargetClient().Fetch.GetResponseBody(ctx, fetch.NewGetResponseBodyArgs(requestID))
 	if err != nil {

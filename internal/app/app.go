@@ -1,3 +1,4 @@
+// Package app 提供 twist 的核心业务逻辑：浏览器管理、CDP 连接、规则引擎和请求拦截。
 package app
 
 import (
@@ -11,6 +12,7 @@ import (
 	"github.com/241x/twist/internal/log"
 )
 
+// Options 命令行解析后的运行参数。
 type Options struct {
 	Host          string
 	Port          int
@@ -26,6 +28,7 @@ type Options struct {
 	Timeout       int
 }
 
+// App 应用主结构，串联浏览器、CDP、规则引擎和拦截器的完整生命周期。
 type App struct {
 	opts      Options
 	signals   chan os.Signal
@@ -43,6 +46,7 @@ func New(opts Options) *App {
 	}
 }
 
+// Run 启动应用主流程：信号监听 → 列出目标或启动拦截。
 func (a *App) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -70,6 +74,7 @@ func (a *App) Run(ctx context.Context) error {
 	return a.runIntercept(ctx)
 }
 
+// Shutdown 清理信号监听资源。
 func (a *App) Shutdown() {
 	signal.Stop(a.signals)
 	close(a.signals)
@@ -159,6 +164,7 @@ func (a *App) runIntercept(ctx context.Context) error {
 	return a.intercept.Start(ctx)
 }
 
+// printTargets 以对齐表格形式输出页面标签列表，中文等宽对齐。
 func printTargets(targets []CDPTarget) {
 	idW := 34
 	titleW := 30

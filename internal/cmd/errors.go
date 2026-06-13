@@ -1,7 +1,9 @@
+// ExitError 携带退出码的错误类型。退出码 1 为用户侧错误，2 为运行时错误。
 package cmd
 
 import "errors"
 
+// ExitError 可携带退出码的错误类型。
 type ExitError struct {
 	Code int
 	Msg  string

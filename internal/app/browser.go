@@ -10,6 +10,7 @@ import (
 	"runtime"
 )
 
+// Browser 管理浏览器进程的启动、端口检测和停止。
 type Browser struct {
 	cmd    *exec.Cmd
 	launch bool
@@ -23,6 +24,8 @@ func NewBrowser(launch bool, port int) *Browser {
 	}
 }
 
+// Start 启动浏览器进程，非 launch 模式直接返回。
+// 启动前检测端口占用，自动在常见路径查找可执行文件。
 func (b *Browser) Start(ctx context.Context, browserType string, args []string, url string) error {
 	if !b.launch {
 		return nil
@@ -46,6 +49,7 @@ func (b *Browser) Start(ctx context.Context, browserType string, args []string, 
 	return nil
 }
 
+// Stop 终止浏览器进程。
 func (b *Browser) Stop() error {
 	if b.cmd == nil || b.cmd.Process == nil {
 		return nil
@@ -97,6 +101,7 @@ func buildCommand(ctx context.Context, execPath string, port int, args []string,
 	return cmd
 }
 
+// findExecutable 按浏览器类型和操作系统查找可执行文件路径。
 func findExecutable(browserType string) (string, error) {
 	var paths []string
 

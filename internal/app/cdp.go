@@ -13,6 +13,7 @@ import (
 	"github.com/mafredri/cdp/rpcc"
 )
 
+// CDPTarget 浏览器标签页目标信息。
 type CDPTarget struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -20,6 +21,8 @@ type CDPTarget struct {
 	Type  string `json:"type"`
 }
 
+// CDP 管理浏览器和页面级 WebSocket 连接，封装 CDP 协议操作。
+// 浏览器级连接用于管理标签页，页面级连接用于拦截具体页面。
 type CDP struct {
 	host    string
 	port    int
@@ -43,6 +46,7 @@ func NewCDP(host string, port int, timeout int, verbose bool) *CDP {
 	}
 }
 
+// Connect 建立浏览器级 CDP 连接，等待浏览器就绪后 WebSocket 握手。
 func (c *CDP) Connect(ctx context.Context) error {
 	c.devt = devtool.New(fmt.Sprintf("http://%s:%d", c.host, c.port))
 
@@ -89,6 +93,7 @@ func (c *CDP) CloseBrowser() error {
 	return nil
 }
 
+// ListTargets 通过 HTTP /json 端点获取所有可调试目标。
 func (c *CDP) ListTargets(ctx context.Context) ([]CDPTarget, error) {
 	targets, err := c.devt.List(ctx)
 	if err != nil {
@@ -172,6 +177,7 @@ func (c *CDP) EnableFetch(ctx context.Context) (fetch.RequestPausedClient, error
 	return paused, nil
 }
 
+// AttachToTarget 连接到指定标签页的 WebSocket，建立页面级连接。
 func (c *CDP) AttachToTarget(ctx context.Context, targetID string) error {
 	targets, err := c.ListTargets(ctx)
 	if err != nil {

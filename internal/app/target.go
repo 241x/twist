@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// Target 标签页选择策略：ID 精确匹配 → 新建标签 → 首个 page 类型。
 type Target struct {
 	cdp *CDP
 }
@@ -13,6 +14,7 @@ func NewTarget(cdp *CDP) *Target {
 	return &Target{cdp: cdp}
 }
 
+// Select 按 targetID/url/默认三种策略选择拦截目标。
 func (t *Target) Select(ctx context.Context, targetID string, url string) (*CDPTarget, error) {
 	if targetID != "" {
 		return t.selectByID(ctx, targetID)
