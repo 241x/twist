@@ -26,6 +26,7 @@ type Options struct {
 	Target        string
 	Verbose       bool
 	Timeout       int
+	Observe       ObserveOptions
 }
 
 // App 应用主结构，串联浏览器、CDP、规则引擎和拦截器的完整生命周期。
@@ -69,6 +70,10 @@ func (a *App) Run(ctx context.Context) error {
 
 	if a.opts.ListTargets {
 		return a.runListTargets(ctx)
+	}
+
+	if a.opts.Observe.Enabled {
+		return a.runObserve(ctx)
 	}
 
 	return a.runIntercept(ctx)
@@ -162,6 +167,63 @@ func (a *App) runIntercept(ctx context.Context) error {
 	logger.Info().Msg("interception started")
 
 	return a.intercept.Start(ctx)
+}
+
+func (a *App) runObserve(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
+	host := a.opts.Host
+	if a.opts.Launch {
+		host = "127.0.0.1"
+	}
+
+	browser := NewBrowser(a.opts.Launch, a.opts.Port)
+	if err := browser.Start(ctx, a.opts.LaunchBrowser, a.opts.LaunchArgs, a.opts.URL); err != nil {
+		return fmt.Errorf("failed to start browser: %w", err)
+	}
+	a.browser = browser
+
+	if browser.IsLaunched() {
+		defer browser.Stop()
+		logger.Info().Str("browser", a.opts.LaunchBrowser).Int("port", a.opts.Port).Msg("browser launched")
+	}
+
+	a.cdp = NewCDP(host, a.opts.Port, a.opts.Timeout, a.opts.Verbose)
+	if err := a.cdp.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to CDP: %w", err)
+	}
+	defer a.cdp.Close()
+
+	a.target = NewTarget(a.cdp)
+
+	selectURL := a.opts.URL
+	if a.opts.Launch {
+		selectURL = ""
+	}
+
+	selected, err := a.target.Select(ctx, a.opts.Target, selectURL)
+	if err != nil {
+		return fmt.Errorf("failed to select target: %w", err)
+	}
+	logger.Info().Str("id", selected.ID).Str("url", selected.URL).Msg("target selected")
+
+	if err := a.cdp.AttachToTarget(ctx, selected.ID); err != nil {
+		return fmt.Errorf("failed to attach to target: %w", err)
+	}
+
+	a.cdp.CloseBrowser()
+
+	if a.opts.Target != "" && a.opts.URL != "" && !a.opts.Launch {
+		if err := a.cdp.NavigateTo(ctx, a.opts.URL); err != nil {
+			return fmt.Errorf("failed to navigate to URL: %w", err)
+		}
+		logger.Info().Str("url", a.opts.URL).Msg("navigated")
+	}
+
+	observe := NewObserve(a.cdp, a.opts.Observe)
+	logger.Info().Msg("observation started")
+
+	return observe.Start(ctx)
 }
 
 // printTargets 以对齐表格形式输出页面标签列表，中文等宽对齐。

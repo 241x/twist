@@ -31,3 +31,5 @@ editor-*.png
 # OS
 .DS_Store
 Thumbs.db
+
+/python

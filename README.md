@@ -1,6 +1,6 @@
 # twist
 
-> A CLI tool that intercepts and modifies browser network requests/responses in real time via Chrome DevTools Protocol (CDP).
+> A CLI tool that observes and modifies browser network requests/responses in real time via Chrome DevTools Protocol (CDP).
 
 [中文文档](README.zh-CN.md)
 
@@ -9,7 +9,13 @@
 ```bash
 go install github.com/241x/twist@latest
 
-# Launch Chrome and intercept with rules
+# Observe network requests (JSONL to stdout)
+twist --launch --observe -u https://example.com
+
+# Observe with filter and count limit
+twist --launch --observe --observe-filter type=xhr --observe-count 20
+
+# Intercept and modify with rules
 twist --launch -c rules.json -u https://example.com
 
 # Connect to existing browser
@@ -17,16 +23,14 @@ twist -c rules.json
 
 # List available tabs
 twist --list-targets
-
-# Pipe rules via stdin
-cat rules.json | twist --launch
 ```
 
 ## Features
 
+- **Observe** — real-time network monitoring with JSONL output, filters, and exit conditions
 - **Intercept & modify** — block requests, mock responses, rewrite headers/URLs/body
 - **25 match conditions** — URL, method, resource type, headers, query params, cookies, request body (regex + JSON Path)
-- **16 actions** — block, setHeader, removeHeader, setUrl, setMethod, setQueryParam, setCookie, setFormField, setStatus, setBody, replaceBodyText, patchBodyJson (RFC 6902)
+- **17 actions** — block, setHeader, removeHeader, setUrl, setMethod, setQueryParam, setCookie, setFormField, setStatus, setBody, appendBody, replaceBodyText, patchBodyJson (RFC 6902), replaceElement
 - **Request & response stage** — modify before server receives, or after browser gets response
 - **Auto-launch browser** — finds Chrome/Chromium/Edge on Windows/macOS/Linux
 - **Pipe support** — `cat rules.json | twist`
@@ -45,8 +49,41 @@ cat rules.json | twist --launch
 | `-c, --config` | — | Rules config file path |
 | `-t, --target` | — | Attach to specific tab ID |
 | `--list-targets` | `false` | List tabs and exit |
+| `--observe` | `false` | Observe mode: output network events as JSONL to stdout |
+| `--observe-count` | `0` | Exit after N matching events (0 = unlimited) |
+| `--observe-duration` | — | Exit after duration (e.g. `30s`, `5m`) |
+| `--observe-filter` | — | Filter events (repeatable, format: `key=val1,val2`) |
+| `--observe-full-body` | `false` | Include full response body (default: truncated to 4KB) |
 | `-v, --verbose` | `false` | Verbose debug logging |
-| `--timeout` | `30` | CDP connection timeout (seconds) |
+| `--timeout` | `15` | CDP connection timeout (seconds) |
+
+## Observe Mode
+
+```bash
+# Watch all requests and responses
+twist --launch --observe -u https://example.com
+
+# Watch 20 XHR events only
+twist --launch --observe --observe-filter type=xhr --observe-count 20
+
+# Watch API requests for 30 seconds
+twist --launch --observe --observe-filter url=api --observe-duration 30s
+
+# Watch with full response bodies
+twist --launch --observe --observe-full-body
+```
+
+Output format (JSONL, one event per line):
+
+```json
+{"type":"request","requestId":"123","url":"https://api.x.com/users","method":"GET","resourceType":"XHR","requestHeaders":{...}}
+{"type":"response","requestId":"123","url":"https://api.x.com/users","statusCode":200,"statusText":"OK","responseHeaders":{...},"body":"[...]","bodySize":1234}
+{"type":"response","requestId":"456","url":"https://bad.com/api","errorReason":"NameNotResolved"}
+```
+
+Filter keys: `url` (substring match), `type` (resource type, case-insensitive).
+
+See [Observe Mode](docs/05-observe-mode.md) for full documentation.
 
 ## Example Config
 
@@ -84,6 +121,7 @@ cat rules.json | twist --launch
 ## Documentation
 
 - [CLI Usage & Parameters](docs/01-cli-usage.md)
+- [Observe Mode](docs/05-observe-mode.md)
 - [Rule Configuration Format](docs/02-config-format.md)
 - [Browser & CDP Interaction](docs/03-browser-cdp.md)
 - [Advanced Topics](docs/04-advanced.md)
