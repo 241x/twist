@@ -156,7 +156,7 @@ func (i *Intercept) processEvent(ctx context.Context, ev *fetch.RequestPausedRep
 }
 
 // shouldBypass 前置过滤：非 HTTP/WebSocket/OPTIONS/CDP自请求/大请求体直接放行。
-func (i *Intercept) shouldBypass(ctx context.Context, ev *fetch.RequestPausedReply) bool {
+func (i *Intercept) shouldBypass(_ context.Context, ev *fetch.RequestPausedReply) bool {
 	u := ev.Request.URL
 
 	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
@@ -214,24 +214,6 @@ func (i *Intercept) continueRequest(ctx context.Context, requestID fetch.Request
 
 	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
 		log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue request failed")
-	}
-}
-
-func (i *Intercept) continueRequestURL(ctx context.Context, requestID fetch.RequestID, newURL string) {
-	args := fetch.NewContinueRequestArgs(requestID)
-	args.SetURL(newURL)
-
-	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
-		log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue request with URL failed")
-	}
-}
-
-func (i *Intercept) continueRequestPost(ctx context.Context, requestID fetch.RequestID, postData []byte) {
-	args := fetch.NewContinueRequestArgs(requestID)
-	args.SetPostData(postData)
-
-	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
-		log.FromContext(ctx).Error().Err(err).Str("requestID", string(requestID)).Msg("continue request with post data failed")
 	}
 }
 
@@ -491,360 +473,50 @@ func matchRegex(pattern, s string) bool {
 	return re.(*regexp.Regexp).MatchString(s)
 }
 
-// executeActions 根据 stage 执行匹配规则的所有 action。
+// executeActions 根据 stage 执行匹配规则的所有 action，支持多 action 合并为单次 CDP 调用。
 func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedReply, rule *Rule, stage string) {
 	logger := log.FromContext(ctx)
 	hdrs := parseHeaders(ev.Request.Headers)
 
+	var (
+		headers         = hdrs
+		respHeaders     = ev.ResponseHeaders
+		finalURL        = ev.Request.URL
+		finalMethod     string
+		finalBody       []byte
+		bodySet         bool
+		needsOrigBody   bool
+		needsOrigPost   bool
+		statusCode      = 200
+		headerDirty     bool
+		respHeaderDirty bool
+		modified        bool
+	)
+
 	for _, action := range rule.Actions {
 		switch action.Type {
 		case "block":
-			var statusCode int
-			if action.StatusCode > 0 {
-				statusCode = action.StatusCode
-			} else {
-				statusCode = 200
+			sc := action.StatusCode
+			if sc == 0 {
+				sc = 200
 			}
-
-			args := fetch.NewFulfillRequestArgs(ev.RequestID, statusCode)
-
-			if len(action.Headers) > 0 {
-				headers := make([]fetch.HeaderEntry, 0, len(action.Headers))
-				for k, v := range action.Headers {
-					headers = append(headers, fetch.HeaderEntry{Name: k, Value: v})
-				}
-				args.SetResponseHeaders(headers)
-			}
-
-			if action.Body != "" {
-				args.SetBody([]byte(action.Body))
-			}
-
-			logger.Debug().
-				Str("rule", rule.ID).
-				Int("statusCode", statusCode).
-				Msg("block request")
-
-			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("fulfill request failed")
-			}
-			return
-
-		case "setHeader":
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("header", action.Name).
-				Msg("set header")
-
-			headers := []fetch.HeaderEntry{
-				{Name: action.Name, Value: fmt.Sprintf("%v", action.Value)},
-			}
-			i.continueRequest(ctx, ev.RequestID, headers)
-			return
-
-		case "removeHeader":
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("header", action.Name).
-				Msg("remove header")
-			i.continueRequest(ctx, ev.RequestID, nil)
-			return
-
-		case "setUrl":
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("url", fmt.Sprintf("%v", action.Value)).
-				Msg("set url")
-			args := fetch.NewContinueRequestArgs(ev.RequestID)
-			args.SetURL(fmt.Sprintf("%v", action.Value))
-			if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("set url failed")
-			}
-			return
-
-		case "setMethod":
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("method", fmt.Sprintf("%v", action.Value)).
-				Msg("set method")
-			args := fetch.NewContinueRequestArgs(ev.RequestID)
-			args.SetMethod(fmt.Sprintf("%v", action.Value))
-			if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("set method failed")
-			}
-			return
-
-		case "setQueryParam":
-			newURL := setQueryParamValue(ev.Request.URL, action.Name, fmt.Sprintf("%v", action.Value))
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("param", action.Name).
-				Msg("set query param")
-			i.continueRequestURL(ctx, ev.RequestID, newURL)
-			return
-
-		case "removeQueryParam":
-			newURL := removeQueryParamValue(ev.Request.URL, action.Name)
-			logger.Debug().
-				Str("rule", rule.ID).
-				Str("param", action.Name).
-				Msg("remove query param")
-			i.continueRequestURL(ctx, ev.RequestID, newURL)
-			return
-
-		case "setCookie":
-			if stage == "response" {
-				newHeaders := modifyResponseCookie(ev.ResponseHeaders, action.Name, fmt.Sprintf("%v", action.Value))
-				logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("set response cookie")
-				i.continueEvent(ctx, ev.RequestID, stage, newHeaders)
-				return
-			}
-			newHeaders := modifyCookieHeader(hdrs, action.Name, fmt.Sprintf("%v", action.Value))
-			logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("set cookie")
-			i.continueRequest(ctx, ev.RequestID, newHeaders)
-			return
-
-		case "removeCookie":
-			if stage == "response" {
-				newHeaders := removeResponseCookie(ev.ResponseHeaders, action.Name)
-				logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("remove response cookie")
-				i.continueEvent(ctx, ev.RequestID, stage, newHeaders)
-				return
-			}
-			newHeaders := removeCookieFromHeader(hdrs, action.Name)
-			logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("remove cookie")
-			i.continueRequest(ctx, ev.RequestID, newHeaders)
-			return
-
-		case "setFormField":
-			contentType := headerGet(hdrs, "Content-Type")
-			if strings.Contains(contentType, "multipart/form-data") {
-				boundary := extractBoundary(contentType)
-				if boundary == "" {
-					logger.Warn().Msg("setFormField: cannot extract multipart boundary")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				body, ok := getPostData(ev.Request)
-				if !ok {
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				newBody, err := setMultipartField(body, boundary, action.Name, fmt.Sprintf("%v", action.Value))
-				if err != nil {
-					logger.Error().Err(err).Msg("setFormField: multipart modify failed")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("set multipart form field")
-				i.continueRequestPost(ctx, ev.RequestID, newBody)
-				return
-			}
-			body, ok := getPostData(ev.Request)
-			if ok {
-				body = setFormFieldValue(body, action.Name, fmt.Sprintf("%v", action.Value))
-			}
-			logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("set form field")
-			i.continueRequestPost(ctx, ev.RequestID, body)
-			return
-
-		case "removeFormField":
-			contentType := headerGet(hdrs, "Content-Type")
-			if strings.Contains(contentType, "multipart/form-data") {
-				boundary := extractBoundary(contentType)
-				if boundary == "" {
-					logger.Warn().Msg("removeFormField: cannot extract multipart boundary")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				body, ok := getPostData(ev.Request)
-				if !ok {
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				newBody, err := removeMultipartField(body, boundary, action.Name)
-				if err != nil {
-					logger.Error().Err(err).Msg("removeFormField: multipart remove failed")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("remove multipart form field")
-				i.continueRequestPost(ctx, ev.RequestID, newBody)
-				return
-			}
-			body, ok := getPostData(ev.Request)
-			if ok {
-				body = removeFormFieldValue(body, action.Name)
-			}
-			logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("remove form field")
-			i.continueRequestPost(ctx, ev.RequestID, body)
+			logger.Debug().Str("rule", rule.ID).Int("statusCode", sc).Msg("block request")
+			i.fulfillWith(ctx, ev.RequestID, sc, action.Headers, action.Body)
 			return
 
 		case "setStatus":
 			if stage != "response" {
 				logger.Warn().Str("action", "setStatus").Msg("setStatus only valid in response stage, passing through")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
+				continue
 			}
-			args := fetch.NewFulfillRequestArgs(ev.RequestID, action.StatusCode)
-			logger.Debug().
-				Str("rule", rule.ID).
-				Int("status", action.StatusCode).
-				Msg("set status")
-			if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("fulfill request failed")
-			}
-			return
-
-		case "setBody":
-			body := action.Body
-			if body == "" {
-				body = fmt.Sprintf("%v", action.Value)
-			}
-
-			if stage == "response" {
-				logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Msg("set response body")
-				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-				args.SetBody([]byte(body))
-				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-					logger.Error().Err(err).Msg("fulfill request failed")
-				}
-				return
-			}
-
-			headers := []fetch.HeaderEntry{}
-			contentType := headerGet(hdrs, "Content-Type")
-			if strings.HasPrefix(body, "{") || strings.HasPrefix(body, "[") {
-				if !strings.Contains(contentType, "json") {
-					headers = append(headers, fetch.HeaderEntry{Name: "Content-Type", Value: "application/json"})
-					logger.Debug().Str("rule", rule.ID).Msg("set Content-Type to application/json")
-				}
-			}
-
-			logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Str("setBody", body).Msg("set request body")
-			args := fetch.NewContinueRequestArgs(ev.RequestID)
-			args.SetPostData([]byte(body))
-			if len(headers) > 0 {
-				args.SetHeaders(headers)
-			}
-			if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
-				logger.Error().Err(err).Msg("set body failed")
-			}
-			return
-
-		case "appendBody":
-			appendContent := fmt.Sprintf("%v", action.Value)
-
-			if stage == "response" {
-				body, err := i.getResponseBody(ctx, ev.RequestID)
-				if err != nil {
-					logger.Error().Err(err).Msg("failed to get response body for append")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				newBody := body + appendContent
-				logger.Debug().Str("rule", rule.ID).Int("origLen", len(body)).Int("newLen", len(newBody)).Msg("append response body")
-				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-				args.SetBody([]byte(newBody))
-				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-					logger.Error().Err(err).Msg("fulfill request failed")
-				}
-				return
-			}
-
-			postData, ok := getPostData(ev.Request)
-			origBody := ""
-			if ok {
-				origBody = string(postData)
-			}
-			newBody := origBody + appendContent
-			logger.Debug().Str("rule", rule.ID).Int("origLen", len(origBody)).Int("newLen", len(newBody)).Msg("append request body")
-			i.continueRequestPost(ctx, ev.RequestID, []byte(newBody))
-			return
-
-		case "replaceBodyText":
-			if stage == "response" {
-				body, err := i.getResponseBody(ctx, ev.RequestID)
-				if err != nil {
-					logger.Error().Err(err).Msg("failed to get response body")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				if action.ReplaceAll {
-					body = strings.ReplaceAll(body, action.Search, action.Replace)
-				} else {
-					body = strings.Replace(body, action.Search, action.Replace, 1)
-				}
-				logger.Debug().Str("rule", rule.ID).Str("search", action.Search).Msg("replace response body text")
-				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-				args.SetBody([]byte(body))
-				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-					logger.Error().Err(err).Msg("fulfill request failed")
-				}
-				return
-			}
-
-			postData, ok := getPostData(ev.Request)
-			if !ok {
-				logger.Warn().Msg("replaceBodyText: no request body")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
-			}
-			body := string(postData)
-			if action.ReplaceAll {
-				body = strings.ReplaceAll(body, action.Search, action.Replace)
-			} else {
-				body = strings.Replace(body, action.Search, action.Replace, 1)
-			}
-			logger.Debug().Str("rule", rule.ID).Str("search", action.Search).Msg("replace request body text")
-			i.continueRequestPost(ctx, ev.RequestID, []byte(body))
-			return
-
-		case "patchBodyJson":
-			if stage == "response" {
-				body, err := i.getResponseBody(ctx, ev.RequestID)
-				if err != nil {
-					logger.Error().Err(err).Msg("failed to get response body")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				patched, err := applyJSONPatch(body, action.Patches)
-				if err != nil {
-					logger.Error().Err(err).Msg("json patch failed")
-					i.continueEvent(ctx, ev.RequestID, stage, nil)
-					return
-				}
-				args := fetch.NewFulfillRequestArgs(ev.RequestID, 200)
-				args.SetBody([]byte(patched))
-				if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
-					logger.Error().Err(err).Msg("fulfill request failed")
-				}
-				return
-			}
-
-			postData, ok := getPostData(ev.Request)
-			if !ok {
-				logger.Warn().Msg("patchBodyJson: no request body to patch")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
-			}
-			origBody := string(postData)
-			logger.Debug().Str("rule", rule.ID).Int("origLen", len(origBody)).Str("origBody", origBody).Msg("patchBodyJson before")
-			patched, err := applyJSONPatch(origBody, action.Patches)
-			if err != nil {
-				logger.Error().Err(err).Msg("json patch failed on request body")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
-			}
-			logger.Debug().Str("rule", rule.ID).Int("patchedLen", len(patched)).Str("patchedBody", patched).Msg("patchBodyJson after")
-			i.continueRequestPost(ctx, ev.RequestID, []byte(patched))
-			return
+			statusCode = action.StatusCode
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Int("status", action.StatusCode).Msg("set status")
 
 		case "replaceElement":
 			if stage != "response" {
 				logger.Warn().Str("action", "replaceElement").Msg("replaceElement only valid in response stage")
-				i.continueEvent(ctx, ev.RequestID, stage, nil)
-				return
+				continue
 			}
 			body, err := i.getResponseBody(ctx, ev.RequestID)
 			if err != nil {
@@ -873,15 +545,355 @@ func (i *Intercept) executeActions(ctx context.Context, ev *fetch.RequestPausedR
 			}
 			return
 
+		case "setHeader":
+			if stage == "response" {
+				if !respHeaderDirty {
+					respHeaders = make([]fetch.HeaderEntry, len(ev.ResponseHeaders))
+					copy(respHeaders, ev.ResponseHeaders)
+					respHeaderDirty = true
+				}
+				respHeaders = setRespHeaderEntry(respHeaders, action.Name, fmt.Sprintf("%v", action.Value))
+			} else {
+				if !headerDirty {
+					headers = copyHeaderMap(hdrs)
+					headerDirty = true
+				}
+				setHeaderInsensitive(headers, action.Name, fmt.Sprintf("%v", action.Value))
+			}
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("header", action.Name).Msg("set header")
+
+		case "removeHeader":
+			if stage == "response" {
+				if !respHeaderDirty {
+					respHeaders = make([]fetch.HeaderEntry, len(ev.ResponseHeaders))
+					copy(respHeaders, ev.ResponseHeaders)
+					respHeaderDirty = true
+				}
+				respHeaders = removeRespHeaderEntry(respHeaders, action.Name)
+			} else {
+				if !headerDirty {
+					headers = copyHeaderMap(hdrs)
+					headerDirty = true
+				}
+				deleteHeaderInsensitive(headers, action.Name)
+			}
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("header", action.Name).Msg("remove header")
+
+		case "setUrl":
+			finalURL = fmt.Sprintf("%v", action.Value)
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("url", finalURL).Msg("set url")
+
+		case "setMethod":
+			finalMethod = fmt.Sprintf("%v", action.Value)
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("method", finalMethod).Msg("set method")
+
+		case "setQueryParam":
+			finalURL = setQueryParamValue(finalURL, action.Name, fmt.Sprintf("%v", action.Value))
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("param", action.Name).Msg("set query param")
+
+		case "removeQueryParam":
+			finalURL = removeQueryParamValue(finalURL, action.Name)
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("param", action.Name).Msg("remove query param")
+
+		case "setCookie":
+			if stage == "response" {
+				if !respHeaderDirty {
+					respHeaders = make([]fetch.HeaderEntry, len(ev.ResponseHeaders))
+					copy(respHeaders, ev.ResponseHeaders)
+					respHeaderDirty = true
+				}
+				respHeaders = modifyResponseCookie(respHeaders, action.Name, fmt.Sprintf("%v", action.Value))
+			} else {
+				if !headerDirty {
+					headers = copyHeaderMap(hdrs)
+					headerDirty = true
+				}
+				cookieVal := headerGet(headers, "Cookie")
+				pairs := parseCookiePairs(cookieVal)
+				pairs[action.Name] = fmt.Sprintf("%v", action.Value)
+				setHeaderInsensitive(headers, "Cookie", buildCookieString(pairs))
+			}
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("set cookie")
+
+		case "removeCookie":
+			if stage == "response" {
+				if !respHeaderDirty {
+					respHeaders = make([]fetch.HeaderEntry, len(ev.ResponseHeaders))
+					copy(respHeaders, ev.ResponseHeaders)
+					respHeaderDirty = true
+				}
+				respHeaders = removeResponseCookie(respHeaders, action.Name)
+			} else {
+				if !headerDirty {
+					headers = copyHeaderMap(hdrs)
+					headerDirty = true
+				}
+				cookieVal := headerGet(headers, "Cookie")
+				pairs := parseCookiePairs(cookieVal)
+				delete(pairs, action.Name)
+				setHeaderInsensitive(headers, "Cookie", buildCookieString(pairs))
+			}
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("cookie", action.Name).Msg("remove cookie")
+
+		case "setFormField":
+			needsOrigPost = true
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("set form field")
+
+		case "removeFormField":
+			needsOrigPost = true
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("field", action.Name).Msg("remove form field")
+
+		case "setBody":
+			body := action.Body
+			if body == "" {
+				body = fmt.Sprintf("%v", action.Value)
+			}
+			finalBody = []byte(body)
+			bodySet = true
+			needsOrigBody = false
+			needsOrigPost = false
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Int("bodyLen", len(body)).Msg("set body")
+
+		case "appendBody":
+			needsOrigBody = true
+			bodySet = true
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Msg("append body")
+
+		case "replaceBodyText":
+			needsOrigBody = true
+			bodySet = true
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Str("search", action.Search).Msg("replace body text")
+
+		case "patchBodyJson":
+			needsOrigBody = true
+			bodySet = true
+			modified = true
+			logger.Debug().Str("rule", rule.ID).Msg("patch body json")
+
 		default:
 			logger.Warn().
 				Str("rule", rule.ID).
 				Str("action", action.Type).
-				Msg("unsupported action, passing through")
+				Msg("unsupported action, skipping")
+		}
+	}
 
-			i.continueRequest(ctx, ev.RequestID, nil)
+	if !modified {
+		i.continueEvent(ctx, ev.RequestID, stage, nil)
+		return
+	}
+
+	if stage == "request" {
+		i.executeRequestActions(ctx, ev, rule, headers, finalURL, finalMethod, finalBody, bodySet, needsOrigBody, needsOrigPost, headerDirty)
+	} else {
+		i.executeResponseActions(ctx, ev, rule, respHeaders, respHeaderDirty, finalBody, bodySet, needsOrigBody, statusCode)
+	}
+}
+
+// executeRequestActions 为请求阶段构建并发送单次 CDP ContinueRequest 调用。
+func (i *Intercept) executeRequestActions(ctx context.Context, ev *fetch.RequestPausedReply, rule *Rule, headers map[string]string, finalURL, finalMethod string, finalBody []byte, bodySet, needsOrigBody, needsOrigPost, headerDirty bool) {
+	logger := log.FromContext(ctx)
+
+	if needsOrigPost {
+		postData, ok := getPostData(ev.Request)
+		if !ok {
+			postData = nil
+		}
+		for _, action := range rule.Actions {
+			switch action.Type {
+			case "setFormField":
+				contentType := headerGet(headers, "Content-Type")
+				if strings.Contains(contentType, "multipart/form-data") {
+					boundary := extractBoundary(contentType)
+					if boundary == "" {
+						logger.Warn().Msg("setFormField: cannot extract multipart boundary")
+						continue
+					}
+					newBody, err := setMultipartField(postData, boundary, action.Name, fmt.Sprintf("%v", action.Value))
+					if err != nil {
+						logger.Error().Err(err).Msg("setFormField: multipart modify failed")
+						continue
+					}
+					postData = newBody
+				} else {
+					postData = setFormFieldValue(postData, action.Name, fmt.Sprintf("%v", action.Value))
+				}
+			case "removeFormField":
+				contentType := headerGet(headers, "Content-Type")
+				if strings.Contains(contentType, "multipart/form-data") {
+					boundary := extractBoundary(contentType)
+					if boundary == "" {
+						logger.Warn().Msg("removeFormField: cannot extract multipart boundary")
+						continue
+					}
+					newBody, err := removeMultipartField(postData, boundary, action.Name)
+					if err != nil {
+						logger.Error().Err(err).Msg("removeFormField: multipart remove failed")
+						continue
+					}
+					postData = newBody
+				} else {
+					postData = removeFormFieldValue(postData, action.Name)
+				}
+			}
+		}
+		finalBody = postData
+		bodySet = true
+	}
+
+	if needsOrigBody && !bodySet {
+		origBody := ""
+		if postData, ok := getPostData(ev.Request); ok {
+			origBody = string(postData)
+		}
+		finalBody = []byte(i.applyBodyTransforms(rule.Actions, origBody))
+		bodySet = true
+	}
+
+	args := fetch.NewContinueRequestArgs(ev.RequestID)
+
+	if finalURL != ev.Request.URL {
+		args.SetURL(finalURL)
+	}
+
+	if finalMethod != "" {
+		args.SetMethod(finalMethod)
+	}
+
+	if bodySet {
+		contentType := headerGet(headers, "Content-Type")
+		if len(finalBody) > 0 && (finalBody[0] == '{' || finalBody[0] == '[') {
+			if !strings.Contains(contentType, "json") {
+				if !headerDirty {
+					headers = copyHeaderMap(headers)
+					headerDirty = true
+				}
+				setHeaderInsensitive(headers, "Content-Type", "application/json")
+			}
+		}
+		args.SetPostData(finalBody)
+	}
+
+	if headerDirty {
+		entries := mapToHeaderEntries(headers)
+		args.SetHeaders(entries)
+	}
+
+	logger.Debug().
+		Str("rule", rule.ID).
+		Str("url", finalURL).
+		Msg("execute combined request actions")
+
+	if err := i.cdp.TargetClient().Fetch.ContinueRequest(ctx, args); err != nil {
+		logger.Error().Err(err).Msg("continue request failed")
+	}
+}
+
+// executeResponseActions 为响应阶段构建并发送单次 CDP 调用。
+func (i *Intercept) executeResponseActions(ctx context.Context, ev *fetch.RequestPausedReply, rule *Rule, respHeaders []fetch.HeaderEntry, respHeaderDirty bool, finalBody []byte, bodySet, needsOrigBody bool, statusCode int) {
+	logger := log.FromContext(ctx)
+
+	if needsOrigBody && !bodySet {
+		origBody, err := i.getResponseBody(ctx, ev.RequestID)
+		if err != nil {
+			logger.Error().Err(err).Msg("failed to get response body")
+			i.continueEvent(ctx, ev.RequestID, "response", nil)
 			return
 		}
+		finalBody = []byte(i.applyBodyTransforms(rule.Actions, origBody))
+		bodySet = true
+	}
+
+	if !bodySet && !respHeaderDirty {
+		args := fetch.NewContinueResponseArgs(ev.RequestID)
+		if err := i.cdp.TargetClient().Fetch.ContinueResponse(ctx, args); err != nil {
+			logger.Error().Err(err).Msg("continue response failed")
+		}
+		return
+	}
+
+	args := fetch.NewFulfillRequestArgs(ev.RequestID, statusCode)
+
+	if respHeaderDirty {
+		args.SetResponseHeaders(respHeaders)
+	}
+
+	if bodySet {
+		args.SetBody(finalBody)
+	}
+
+	logger.Debug().
+		Str("rule", rule.ID).
+		Int("statusCode", statusCode).
+		Bool("hasBody", bodySet).
+		Bool("hasHeaders", respHeaderDirty).
+		Msg("execute combined response actions")
+
+	if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+		logger.Error().Err(err).Msg("fulfill request failed")
+	}
+}
+
+// applyBodyTransforms 按 action 顺序对原始 body 执行所有文本变换。
+func (i *Intercept) applyBodyTransforms(actions []Action, body string) string {
+	for _, action := range actions {
+		switch action.Type {
+		case "replaceBodyText":
+			if action.ReplaceAll {
+				body = strings.ReplaceAll(body, action.Search, action.Replace)
+			} else {
+				body = strings.Replace(body, action.Search, action.Replace, 1)
+			}
+		case "patchBodyJson":
+			patched, err := applyJSONPatch(body, action.Patches)
+			if err == nil {
+				body = patched
+			}
+		case "appendBody":
+			body += fmt.Sprintf("%v", action.Value)
+		case "setBody":
+			b := action.Body
+			if b == "" {
+				b = fmt.Sprintf("%v", action.Value)
+			}
+			body = b
+		}
+	}
+	return body
+}
+
+// fulfillWith 发送 FulfillRequest 带自定义 headers 和 body。
+func (i *Intercept) fulfillWith(ctx context.Context, requestID fetch.RequestID, statusCode int, headers map[string]string, body string) {
+	logger := log.FromContext(ctx)
+	args := fetch.NewFulfillRequestArgs(requestID, statusCode)
+
+	if len(headers) > 0 {
+		entries := make([]fetch.HeaderEntry, 0, len(headers))
+		for k, v := range headers {
+			entries = append(entries, fetch.HeaderEntry{Name: k, Value: v})
+		}
+		args.SetResponseHeaders(entries)
+	}
+
+	if body != "" {
+		args.SetBody([]byte(body))
+	}
+
+	if err := i.cdp.TargetClient().Fetch.FulfillRequest(ctx, args); err != nil {
+		logger.Error().Err(err).Msg("fulfill request failed")
 	}
 }
 
@@ -1101,7 +1113,7 @@ func removeMultipartField(body []byte, boundary, fieldName string) ([]byte, erro
 	})
 }
 
-func modifyMultipart(body []byte, boundary, fieldName string, fn func([]string) ([]string, bool)) ([]byte, error) {
+func modifyMultipart(body []byte, _, _ string, fn func([]string) ([]string, bool)) ([]byte, error) {
 	text := string(body)
 	lines := strings.Split(text, "\r\n")
 	lines, _ = fn(lines)
@@ -1120,16 +1132,20 @@ func (i *Intercept) getResponseBody(ctx context.Context, requestID fetch.Request
 	if err != nil {
 		return "", err
 	}
-	if len(reply.Body) > maxResponseBodySize {
-		return "", fmt.Errorf("response body too large: %d bytes", len(reply.Body))
-	}
+
 	body := reply.Body
 	if reply.Base64Encoded {
 		decoded, err := base64.StdEncoding.DecodeString(body)
-		if err == nil {
-			body = string(decoded)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode base64 body: %w", err)
 		}
+		body = string(decoded)
 	}
+
+	if len(body) > maxResponseBodySize {
+		return "", fmt.Errorf("response body too large: %d bytes", len(body))
+	}
+
 	return body, nil
 }
 
@@ -1227,4 +1243,61 @@ func removeResponseCookie(headers []fetch.HeaderEntry, name string) []fetch.Head
 		result = append(result, h)
 	}
 	return result
+}
+
+func copyHeaderMap(src map[string]string) map[string]string {
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func setHeaderInsensitive(headers map[string]string, name, value string) {
+	for k := range headers {
+		if strings.EqualFold(k, name) {
+			headers[k] = value
+			return
+		}
+	}
+	headers[name] = value
+}
+
+func deleteHeaderInsensitive(headers map[string]string, name string) {
+	for k := range headers {
+		if strings.EqualFold(k, name) {
+			delete(headers, k)
+			return
+		}
+	}
+}
+
+func setRespHeaderEntry(headers []fetch.HeaderEntry, name, value string) []fetch.HeaderEntry {
+	for i, h := range headers {
+		if strings.EqualFold(h.Name, name) {
+			headers[i].Value = value
+			return headers
+		}
+	}
+	return append(headers, fetch.HeaderEntry{Name: name, Value: value})
+}
+
+func removeRespHeaderEntry(headers []fetch.HeaderEntry, name string) []fetch.HeaderEntry {
+	result := make([]fetch.HeaderEntry, 0, len(headers))
+	for _, h := range headers {
+		if !strings.EqualFold(h.Name, name) {
+			result = append(result, h)
+		}
+	}
+	return result
+}
+
+func mapToHeaderEntries(headers map[string]string) []fetch.HeaderEntry {
+	entries := make([]fetch.HeaderEntry, 0, len(headers))
+	for k, v := range headers {
+		if v != "" {
+			entries = append(entries, fetch.HeaderEntry{Name: k, Value: v})
+		}
+	}
+	return entries
 }

@@ -299,3 +299,140 @@ func TestBlockActionDefaults(t *testing.T) {
 		t.Errorf("block BodyEncoding default = %q, want text", a.BodyEncoding)
 	}
 }
+
+func TestValidateActionsCompatibility(t *testing.T) {
+	tests := []struct {
+		name    string
+		actions string
+		stage   string
+		wantErr bool
+	}{
+		{
+			name:    "single action ok",
+			actions: `[{"type": "block"}]`,
+			stage:   "request",
+		},
+		{
+			name:    "two modify actions ok",
+			actions: `[{"type": "setHeader", "name": "X-Test", "value": "1"}, {"type": "setUrl", "value": "https://example.com"}]`,
+			stage:   "request",
+		},
+		{
+			name:    "multiple header actions ok",
+			actions: `[{"type": "setHeader", "name": "X-A", "value": "1"}, {"type": "removeHeader", "name": "X-B"}, {"type": "setCookie", "name": "c1", "value": "v1"}]`,
+			stage:   "request",
+		},
+		{
+			name:    "block + setHeader conflict",
+			actions: `[{"type": "block"}, {"type": "setHeader", "name": "X-Test", "value": "1"}]`,
+			stage:   "request",
+			wantErr: true,
+		},
+		{
+			name:    "setStatus + setHeader conflict",
+			actions: `[{"type": "setStatus", "value": 404}, {"type": "setHeader", "name": "X-Test", "value": "1"}]`,
+			stage:   "response",
+			wantErr: true,
+		},
+		{
+			name:    "block + setStatus conflict",
+			actions: `[{"type": "block"}, {"type": "setStatus", "value": 500}]`,
+			stage:   "response",
+			wantErr: true,
+		},
+		{
+			name:    "replaceElement + setHeader conflict",
+			actions: `[{"type": "replaceElement", "selector": "body", "value": "hi"}, {"type": "setHeader", "name": "X-Test", "value": "1"}]`,
+			stage:   "response",
+			wantErr: true,
+		},
+		{
+			name:    "formField + bodyText conflict",
+			actions: `[{"type": "setFormField", "name": "user", "value": "admin"}, {"type": "setBody", "value": "{\"ok\":true}"}]`,
+			stage:   "request",
+			wantErr: true,
+		},
+		{
+			name:    "bodyText only ok",
+			actions: `[{"type": "setBody", "value": "hello"}, {"type": "appendBody", "value": "world"}]`,
+			stage:   "request",
+		},
+		{
+			name:    "formField only ok",
+			actions: `[{"type": "setFormField", "name": "a", "value": "1"}, {"type": "removeFormField", "name": "b"}]`,
+			stage:   "request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `{
+				"id": "t-1",
+				"name": "test",
+				"version": "1.0",
+				"rules": [{
+					"id": "r1",
+					"name": "r1",
+					"enabled": true,
+					"priority": 0,
+					"stage": "` + tt.stage + `",
+					"match": {},
+					"actions": ` + tt.actions + `
+				}]
+			}`
+
+			cfg := cfgFromParse(t, input)
+			err := validateConfig(cfg)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error but got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func cfgFromParse(t *testing.T, input string) *Config {
+	t.Helper()
+	cfg, err := parseConfig([]byte(input))
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	return cfg
+}
+
+func TestApplyBodyTransforms(t *testing.T) {
+	i := &Intercept{}
+
+	actions := []Action{
+		{Type: "replaceBodyText", Search: "old", Replace: "new"},
+		{Type: "patchBodyJson", Patches: []JSONPatch{{Op: "add", Path: "extra", Value: 42}}},
+		{Type: "appendBody", Value: "suffix"},
+	}
+
+	result := i.applyBodyTransforms(actions, `{"name":"old","count":1}`)
+	if !strings.Contains(result, "new") {
+		t.Errorf("replaceBodyText not applied: %s", result)
+	}
+	if !strings.Contains(result, "extra") {
+		t.Errorf("patchBodyJson not applied: %s", result)
+	}
+	if !strings.HasSuffix(result, "suffix") {
+		t.Errorf("appendBody not applied: %s", result)
+	}
+}
+
+func TestApplyBodyTransformsSetBody(t *testing.T) {
+	i := &Intercept{}
+
+	actions := []Action{
+		{Type: "replaceBodyText", Search: "old", Replace: "new"},
+		{Type: "setBody", Value: "final"},
+	}
+
+	result := i.applyBodyTransforms(actions, "original")
+	if result != "final" {
+		t.Errorf("setBody should override earlier transforms, got: %s", result)
+	}
+}

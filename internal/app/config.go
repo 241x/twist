@@ -278,6 +278,50 @@ func validateConfig(cfg *Config) error {
 		if len(rule.Actions) == 0 {
 			return fmt.Errorf("rules[%d]: field 'actions' must not be empty", i)
 		}
+		if err := validateActionsCompatibility(rule.Actions, rule.Stage); err != nil {
+			return fmt.Errorf("rules[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func validateActionsCompatibility(actions []Action, _ string) error {
+	if len(actions) == 1 {
+		return nil
+	}
+
+	hasTerminal := false
+	hasModify := false
+	terminalType := ""
+	hasFormField := false
+	hasBodyText := false
+
+	for _, a := range actions {
+		switch a.Type {
+		case "block", "setStatus", "replaceElement":
+			if hasTerminal {
+				return fmt.Errorf("multiple terminal actions (%q and %q) cannot coexist in one rule", terminalType, a.Type)
+			}
+			hasTerminal = true
+			terminalType = a.Type
+		case "setFormField", "removeFormField":
+			hasFormField = true
+			hasModify = true
+		case "setBody", "appendBody", "replaceBodyText", "patchBodyJson":
+			hasBodyText = true
+			hasModify = true
+		default:
+			hasModify = true
+		}
+	}
+
+	if hasTerminal && hasModify {
+		return fmt.Errorf("terminal action %q cannot coexist with modify actions in one rule", terminalType)
+	}
+
+	if hasFormField && hasBodyText {
+		return fmt.Errorf("form field actions and body text actions cannot coexist in one rule")
 	}
 
 	return nil

@@ -1066,3 +1066,74 @@ func TestMatchBodyJsonPath(t *testing.T) {
 		t.Error("bodyJsonPath should not match nonexistent path")
 	}
 }
+
+func TestCopyHeaderMap(t *testing.T) {
+	src := map[string]string{"A": "1", "B": "2"}
+	dst := copyHeaderMap(src)
+	dst["A"] = "modified"
+	if src["A"] != "1" {
+		t.Error("copyHeaderMap should not mutate original")
+	}
+	if dst["B"] != "2" {
+		t.Error("copyHeaderMap should copy all entries")
+	}
+}
+
+func TestSetHeaderInsensitive(t *testing.T) {
+	headers := map[string]string{"Content-Type": "text/html"}
+	setHeaderInsensitive(headers, "content-type", "application/json")
+	if headers["Content-Type"] != "application/json" {
+		t.Errorf("setHeaderInsensitive should match case-insensitively, got %q", headers["Content-Type"])
+	}
+	setHeaderInsensitive(headers, "X-New", "val")
+	if headers["X-New"] != "val" {
+		t.Error("setHeaderInsensitive should add new header")
+	}
+}
+
+func TestDeleteHeaderInsensitive(t *testing.T) {
+	headers := map[string]string{"Content-Type": "text/html", "X-Keep": "yes"}
+	deleteHeaderInsensitive(headers, "content-type")
+	if _, ok := headers["Content-Type"]; ok {
+		t.Error("deleteHeaderInsensitive should remove matched key")
+	}
+	if headers["X-Keep"] != "yes" {
+		t.Error("deleteHeaderInsensitive should keep unmatched keys")
+	}
+}
+
+func TestSetRespHeaderEntry(t *testing.T) {
+	headers := []fetch.HeaderEntry{
+		{Name: "Content-Type", Value: "text/html"},
+	}
+
+	result := setRespHeaderEntry(headers, "content-type", "application/json")
+	if result[0].Value != "application/json" {
+		t.Error("setRespHeaderEntry should update existing header case-insensitively")
+	}
+
+	result = setRespHeaderEntry(headers, "X-Custom", "val")
+	if len(result) != 2 || result[1].Value != "val" {
+		t.Error("setRespHeaderEntry should add new entry")
+	}
+}
+
+func TestRemoveRespHeaderEntry(t *testing.T) {
+	headers := []fetch.HeaderEntry{
+		{Name: "Content-Type", Value: "text/html"},
+		{Name: "X-Keep", Value: "yes"},
+	}
+
+	result := removeRespHeaderEntry(headers, "content-type")
+	if len(result) != 1 || result[0].Name != "X-Keep" {
+		t.Errorf("removeRespHeaderEntry should remove matched entry, got %+v", result)
+	}
+}
+
+func TestMapToHeaderEntries(t *testing.T) {
+	headers := map[string]string{"A": "1", "B": "2", "C": ""}
+	entries := mapToHeaderEntries(headers)
+	if len(entries) != 2 {
+		t.Errorf("mapToHeaderEntries should skip empty values, got %d entries", len(entries))
+	}
+}
