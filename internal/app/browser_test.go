@@ -96,7 +96,7 @@ func TestFindExecutableUnknown(t *testing.T) {
 }
 
 func TestBuildCommand(t *testing.T) {
-	cmd := buildCommand(context.Background(), "chrome.exe", 9222, nil, "")
+	cmd, _ := buildCommand(context.Background(), "chrome.exe", 9222, nil, "")
 
 	if cmd.Path != "chrome.exe" {
 		t.Errorf("Path = %q, want chrome.exe", cmd.Path)
@@ -130,7 +130,7 @@ func TestBuildCommand(t *testing.T) {
 
 func TestBuildCommandWithArgs(t *testing.T) {
 	extra := []string{"--headless", "--disable-gpu"}
-	cmd := buildCommand(context.Background(), "chrome", 9222, extra, "https://example.com")
+	cmd, _ := buildCommand(context.Background(), "chrome", 9222, extra, "https://example.com")
 
 	foundHeadless := false
 	foundURL := false
@@ -159,12 +159,12 @@ func TestBuildCommandWithArgs(t *testing.T) {
 
 func TestBuildCommandDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		cmd := buildCommand(context.Background(), `C:\Program Files\Chrome\chrome.exe`, 9222, nil, "")
+		cmd, _ := buildCommand(context.Background(), `C:\Program Files\Chrome\chrome.exe`, 9222, nil, "")
 		if cmd.Dir != `C:\Program Files\Chrome` {
 			t.Errorf("Dir = %q", cmd.Dir)
 		}
 	} else {
-		cmd := buildCommand(context.Background(), "/usr/bin/chrome", 9222, nil, "")
+		cmd, _ := buildCommand(context.Background(), "/usr/bin/chrome", 9222, nil, "")
 		if cmd.Dir != "/usr/bin" {
 			t.Errorf("Dir = %q", cmd.Dir)
 		}

@@ -296,10 +296,12 @@ func validateActionsCompatibility(actions []Action, _ string) error {
 	terminalType := ""
 	hasFormField := false
 	hasBodyText := false
+	hasSetBody := false
+	hasBodyTransform := false
 
 	for _, a := range actions {
 		switch a.Type {
-		case "block", "setStatus", "replaceElement":
+		case "block", "replaceElement":
 			if hasTerminal {
 				return fmt.Errorf("multiple terminal actions (%q and %q) cannot coexist in one rule", terminalType, a.Type)
 			}
@@ -308,7 +310,12 @@ func validateActionsCompatibility(actions []Action, _ string) error {
 		case "setFormField", "removeFormField":
 			hasFormField = true
 			hasModify = true
-		case "setBody", "appendBody", "replaceBodyText", "patchBodyJson":
+		case "setBody":
+			hasSetBody = true
+			hasBodyText = true
+			hasModify = true
+		case "appendBody", "replaceBodyText", "patchBodyJson":
+			hasBodyTransform = true
 			hasBodyText = true
 			hasModify = true
 		default:
@@ -322,6 +329,10 @@ func validateActionsCompatibility(actions []Action, _ string) error {
 
 	if hasFormField && hasBodyText {
 		return fmt.Errorf("form field actions and body text actions cannot coexist in one rule")
+	}
+
+	if hasSetBody && hasBodyTransform {
+		return fmt.Errorf("setBody cannot coexist with appendBody, replaceBodyText, or patchBodyJson in one rule")
 	}
 
 	return nil

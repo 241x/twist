@@ -700,44 +700,6 @@ func TestRemoveQueryParamValue(t *testing.T) {
 	}
 }
 
-func TestModifyCookieHeader(t *testing.T) {
-	hdrs := map[string]string{
-		"Cookie": "sessionId=abc; theme=dark",
-	}
-
-	entries := modifyCookieHeader(hdrs, "theme", "light")
-	found := false
-	for _, e := range entries {
-		if e.Name == "Cookie" &&
-			strings.Contains(e.Value, "sessionId=abc") &&
-			strings.Contains(e.Value, "theme=light") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("cookie not modified: %+v", entries)
-	}
-}
-
-func TestRemoveCookieFromHeader(t *testing.T) {
-	hdrs := map[string]string{
-		"Cookie": "sessionId=abc; theme=dark; token=xyz",
-	}
-
-	entries := removeCookieFromHeader(hdrs, "theme")
-	found := false
-	for _, e := range entries {
-		if e.Name == "Cookie" {
-			if !strings.Contains(e.Value, "theme") && strings.Contains(e.Value, "sessionId") && strings.Contains(e.Value, "token") {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Errorf("cookie not removed: %+v", entries)
-	}
-}
-
 func TestParseCookiePairs(t *testing.T) {
 	pairs := parseCookiePairs("a=1; b=2; c=3")
 	if pairs["a"] != "1" || pairs["b"] != "2" || pairs["c"] != "3" {

@@ -15,6 +15,7 @@ type Browser struct {
 	cmd    *exec.Cmd
 	launch bool
 	port   int
+	tmpDir string
 }
 
 func NewBrowser(launch bool, port int) *Browser {
@@ -40,7 +41,7 @@ func (b *Browser) Start(ctx context.Context, browserType string, args []string, 
 		return err
 	}
 
-	b.cmd = buildCommand(ctx, execPath, b.port, args, url)
+	b.cmd, b.tmpDir = buildCommand(ctx, execPath, b.port, args, url)
 
 	if err := b.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start browser: %w", err)
@@ -49,7 +50,7 @@ func (b *Browser) Start(ctx context.Context, browserType string, args []string, 
 	return nil
 }
 
-// Stop 终止浏览器进程。
+// Stop 终止浏览器进程并清理临时目录。
 func (b *Browser) Stop() error {
 	if b.cmd == nil || b.cmd.Process == nil {
 		return nil
@@ -57,6 +58,10 @@ func (b *Browser) Stop() error {
 
 	if err := b.cmd.Process.Kill(); err != nil {
 		return fmt.Errorf("failed to stop browser: %w", err)
+	}
+
+	if b.tmpDir != "" {
+		os.RemoveAll(b.tmpDir)
 	}
 
 	return nil
@@ -76,7 +81,7 @@ func (b *Browser) checkPort() error {
 	return nil
 }
 
-func buildCommand(ctx context.Context, execPath string, port int, args []string, url string) *exec.Cmd {
+func buildCommand(ctx context.Context, execPath string, port int, args []string, url string) (*exec.Cmd, string) {
 	defaultArgs := []string{
 		fmt.Sprintf("--remote-debugging-port=%d", port),
 		"--no-first-run",
@@ -98,7 +103,7 @@ func buildCommand(ctx context.Context, execPath string, port int, args []string,
 	cmd := exec.CommandContext(ctx, execPath, allArgs...)
 	cmd.Dir = filepath.Dir(execPath)
 
-	return cmd
+	return cmd, tmpDir
 }
 
 // findExecutable 按浏览器类型和操作系统查找可执行文件路径。

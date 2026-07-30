@@ -22,12 +22,6 @@ import (
 	"github.com/241x/twist/internal/log"
 )
 
-var _ struct {
-	json.Number
-	gjson.Result
-	sjson.Options
-}
-
 const maxBodySize = 5 * 1024 * 1024
 const maxResponseBodySize = 10 * 1024 * 1024
 
@@ -817,6 +811,17 @@ func (i *Intercept) executeResponseActions(ctx context.Context, ev *fetch.Reques
 		bodySet = true
 	}
 
+	if respHeaderDirty && !bodySet {
+		origBody, err := i.getResponseBody(ctx, ev.RequestID)
+		if err != nil {
+			logger.Error().Err(err).Msg("failed to get response body for header-only modification")
+			i.continueEvent(ctx, ev.RequestID, "response", nil)
+			return
+		}
+		finalBody = []byte(origBody)
+		bodySet = true
+	}
+
 	if !bodySet && !respHeaderDirty {
 		args := fetch.NewContinueResponseArgs(ev.RequestID)
 		if err := i.cdp.TargetClient().Fetch.ContinueResponse(ctx, args); err != nil {
@@ -927,26 +932,6 @@ func removeQueryParamValue(rawURL, name string) string {
 	q.Del(name)
 	u.RawQuery = q.Encode()
 	return u.String()
-}
-
-func modifyCookieHeader(headers map[string]string, name, value string) []fetch.HeaderEntry {
-	cookieVal := headerGet(headers, "Cookie")
-	pairs := parseCookiePairs(cookieVal)
-	pairs[name] = value
-
-	newCookie := buildCookieString(pairs)
-	entries := buildHeaderEntries(headers, "Cookie", newCookie)
-	return entries
-}
-
-func removeCookieFromHeader(headers map[string]string, name string) []fetch.HeaderEntry {
-	cookieVal := headerGet(headers, "Cookie")
-	pairs := parseCookiePairs(cookieVal)
-	delete(pairs, name)
-
-	newCookie := buildCookieString(pairs)
-	entries := buildHeaderEntries(headers, "Cookie", newCookie)
-	return entries
 }
 
 func parseCookiePairs(cookieStr string) map[string]string {
@@ -1105,7 +1090,7 @@ func removeMultipartField(body []byte, boundary, fieldName string) ([]byte, erro
 		}
 		if start >= 0 && end > start {
 			for i := start; i < end; i++ {
-				lines[i] = ""
+				lines[i] = multipartRemoveSentinel
 			}
 			return lines, true
 		}
@@ -1113,13 +1098,15 @@ func removeMultipartField(body []byte, boundary, fieldName string) ([]byte, erro
 	})
 }
 
+const multipartRemoveSentinel = "\x00twist-remove\x00"
+
 func modifyMultipart(body []byte, _, _ string, fn func([]string) ([]string, bool)) ([]byte, error) {
 	text := string(body)
 	lines := strings.Split(text, "\r\n")
 	lines, _ = fn(lines)
 	result := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if line != "" {
+		if line != multipartRemoveSentinel {
 			result = append(result, line)
 		}
 	}

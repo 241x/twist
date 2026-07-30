@@ -37,7 +37,9 @@ func (s *Server) Start() error {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	go func() {
-		openBrowser("http://" + addr)
+		if err := openBrowser("http://" + addr); err != nil {
+			fmt.Fprintf(os.Stderr, "twist editor: failed to open browser: %v\n", err)
+		}
 	}()
 
 	return http.ListenAndServe(addr, mux)
@@ -77,7 +79,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":"ok","file":%q}`, name)
 }
 
-func openBrowser(url string) {
+func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
@@ -87,5 +89,5 @@ func openBrowser(url string) {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	cmd.Start()
+	return cmd.Start()
 }

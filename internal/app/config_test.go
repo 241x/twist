@@ -329,10 +329,9 @@ func TestValidateActionsCompatibility(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "setStatus + setHeader conflict",
+			name:    "setStatus + setHeader ok",
 			actions: `[{"type": "setStatus", "value": 404}, {"type": "setHeader", "name": "X-Test", "value": "1"}]`,
 			stage:   "response",
-			wantErr: true,
 		},
 		{
 			name:    "block + setStatus conflict",
@@ -353,9 +352,10 @@ func TestValidateActionsCompatibility(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "bodyText only ok",
+			name:    "setBody + appendBody conflict",
 			actions: `[{"type": "setBody", "value": "hello"}, {"type": "appendBody", "value": "world"}]`,
 			stage:   "request",
+			wantErr: true,
 		},
 		{
 			name:    "formField only ok",
